@@ -16,6 +16,94 @@ jobs:
         with:
           packages: platforms;android-34 build-tools;34.0.0
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1
+      - name: Outline text and icons
+        run: |
+          python3 - <<'PY'
+          import re, sys, os
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+          # 1. two tiny views that draw their text several times, so the black shadow builds up into an outline
+          jdir = base + "java/com/gathin/tvhome/"
+          def java_source(name, parent):
+              lines = [
+                  "package com.gathin.tvhome;",
+                  "",
+                  "import android.content.Context;",
+                  "import android.graphics.Canvas;",
+                  "import android.util.AttributeSet;",
+                  "import android.widget.%s;" % parent,
+                  "",
+                  "/** %s that draws its text four times: the black shadow set in the layout then reads as an outline. */" % parent,
+                  "public class %s extends %s {" % (name, parent),
+                  "    public %s(Context context) { super(context); }" % name,
+                  "    public %s(Context context, AttributeSet attrs) { super(context, attrs); }" % name,
+                  "    public %s(Context context, AttributeSet attrs, int defStyleAttr) { super(context, attrs, defStyleAttr); }" % name,
+                  "",
+                  "    @Override",
+                  "    protected void onDraw(Canvas canvas) {",
+                  "        for (int i = 0; i < 4; i++) super.onDraw(canvas);",
+                  "    }",
+                  "}",
+                  "",
+              ]
+              return "\n".join(lines)
+          write(jdir + "OutlineTextView.java", java_source("OutlineTextView", "TextView"))
+          write(jdir + "OutlineTextClock.java", java_source("OutlineTextClock", "TextClock"))
+
+          # 2. header texts: same views, new class, black shadow all around
+          path = res + "layout/activity_main.xml"
+          s = read(path)
+          SHADOW = 'android:shadowColor="#FF000000" android:shadowRadius="5" android:shadowDx="0" android:shadowDy="0"'
+          targets = {"greeting": "TextView", "clock": "TextClock", "ampm": "TextClock", "date": "TextClock",
+                     "heroName": "TextView", "heroMeta": "TextView"}
+          for name, tag in targets.items():
+              key = 'android:id="@+id/%s"' % name
+              pos = s.find(key)
+              if pos < 0:
+                  sys.exit("PATCH FAILED: %s not found" % name)
+              start = s.rfind("<", 0, pos)
+              end = s.find(">", pos)
+              block = s[start:end]
+              if not block.startswith("<" + tag) or not block.rstrip().endswith("/"):
+                  sys.exit("PATCH FAILED: unexpected shape for %s" % name)
+              new = "<com.gathin.tvhome.Outline" + block[1:]
+              new = new.replace(key, key + " " + SHADOW, 1)
+              if name == "date":
+                  new, n = re.subn(r'android:textSize="\d+sp"', 'android:textSize="20sp"', new)
+                  if n != 1:
+                      sys.exit("PATCH FAILED: date size")
+              s = s[:start] + new + s[end:]
+          write(path, s)
+
+          # 3. top-bar icons: black outline path under the white one; multiply tint keeps both colours
+          for icon in ["ic_input", "ic_settings", "ic_wifi", "ic_ethernet"]:
+              p = res + "drawable/%s.xml" % icon
+              t = read(p)
+              m = re.search(r'<path android:fillColor="#FFFFFFFF"\s+android:pathData="([^"]+)"\s*/>', t)
+              if not m:
+                  sys.exit("PATCH FAILED: %s has an unexpected shape" % icon)
+              d = m.group(1)
+              new = ('<group android:scaleX="0.88" android:scaleY="0.88" android:pivotX="12" android:pivotY="12">\n'
+                     '        <path android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="1.8"\n'
+                     '            android:strokeLineJoin="round" android:strokeLineCap="round" android:pathData="%s" />\n'
+                     '        <path android:fillColor="#FFFFFFFF" android:pathData="%s" />\n'
+                     '    </group>') % (d, d)
+              write(p, t[:m.start()] + new + t[m.end():])
+          sp = res + "values/styles.xml"
+          st = read(sp)
+          anchor = '<item name="android:drawableTint">@drawable/pill_text</item>'
+          if st.count(anchor) != 1:
+              sys.exit("PATCH FAILED: style anchor")
+          write(sp, st.replace(anchor, anchor + '\n        <item name="android:drawableTintMode">multiply</item>'))
+          print("outline patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -23,5 +111,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk
+          name: launcher-apk-outline
           path: launcher/app/build/outputs/apk/release/app-release.apk
