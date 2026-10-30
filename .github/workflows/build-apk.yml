@@ -16,7 +16,7 @@ jobs:
         with:
           packages: platforms;android-34 build-tools;34.0.0
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1
-      - name: Outline text and icons
+      - name: Outline text, icons and header position
         run: |
           python3 - <<'PY'
           import re, sys, os
@@ -76,10 +76,19 @@ jobs:
               new = "<com.gathin.tvhome.Outline" + block[1:]
               new = new.replace(key, key + " " + SHADOW, 1)
               if name == "date":
-                  new, n = re.subn(r'android:textSize="\d+sp"', 'android:textSize="20sp"', new)
+                  new, n = re.subn(r'android:textSize="\d+sp"', 'android:textSize="12sp"', new)
                   if n != 1:
                       sys.exit("PATCH FAILED: date size")
               s = s[:start] + new + s[end:]
+          write(path, s)
+          anchor = 'android:paddingTop="26dp"'
+          if s.count(anchor) != 1:
+              sys.exit("PATCH FAILED: header anchor")
+          i = s.find(anchor)
+          j = s.find("<RelativeLayout", i)
+          if j < 0 or j - i > 600:
+              sys.exit("PATCH FAILED: header row not found")
+          s = s[:j] + '<RelativeLayout android:layout_marginStart="-32dp" android:layout_marginEnd="-32dp" android:layout_marginTop="-14dp"' + s[j + len("<RelativeLayout"):]
           write(path, s)
 
           # 3. top-bar icons: black outline path under the white one; multiply tint keeps both colours
@@ -104,6 +113,128 @@ jobs:
           write(sp, st.replace(anchor, anchor + '\n        <item name="android:drawableTintMode">multiply</item>'))
           print("outline patch applied")
           PY
+      - name: Adblock button
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. shield icon, same black outline + white fill as the other top-bar icons
+          write(res + "drawable/ic_adblock.xml", "\n".join([
+              '<?xml version="1.0" encoding="utf-8"?>',
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+              '    android:width="22dp" android:height="22dp"',
+              '    android:viewportWidth="24" android:viewportHeight="24">',
+              '    <group android:scaleX="0.88" android:scaleY="0.88" android:pivotX="12" android:pivotY="12">',
+              '        <path android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="1.8"',
+              '            android:strokeLineJoin="round" android:strokeLineCap="round"',
+              '            android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5l-9,-4z" />',
+              '        <path android:fillColor="#FFFFFFFF"',
+              '            android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5l-9,-4z" />',
+              '    </group>',
+              '</vector>',
+              '',
+          ]))
+
+          # 2. layout: the old (hidden) reorder pill becomes the adblock pill, moved in front of the Sources pill
+          lp = res + "layout/activity_main.xml"
+          s = read(lp)
+          rid = 'android:id="@+id/btnReorder"'
+          i = s.find(rid)
+          start = s.rfind("<TextView", 0, i)
+          end = s.find("/>", i) + 2
+          if i < 0 or start < 0 or end < 2:
+              sys.exit("PATCH FAILED: reorder pill not found")
+          block = s[start:end]
+          block = once(block, "@drawable/ic_swap_vert", "@drawable/ic_adblock", "reorder icon")
+          s = s[:start] + s[end:]
+          iid = 'android:id="@+id/btnInputs"'
+          j = s.find(iid)
+          istart = s.rfind("<TextView", 0, j)
+          if j < 0 or istart < 0:
+              sys.exit("PATCH FAILED: inputs pill not found")
+          s = s[:istart] + block + "\n\n                " + s[istart:]
+          write(lp, s)
+
+          # 3. code: click toggles Android's Private DNS between AdGuard DNS and automatic
+          jp = base + "java/com/gathin/tvhome/MainActivity.java"
+          t = read(jp)
+          t = once(t,
+                   "        btnReorder.setOnClickListener(v -> toggleReorder());\n"
+                   "        btnReorder.setVisibility(cfg.reorderButton ? View.VISIBLE : View.GONE);",
+                   "        btnReorder.setOnClickListener(v -> toggleAdBlock());\n"
+                   "        btnReorder.setVisibility(View.VISIBLE);\n"
+                   "        adblockPlainInk = ((TextView) btnReorder).getCompoundDrawableTintList();\n"
+                   "        refreshAdBlock();",
+                   "reorder click")
+          t = once(t,
+                   "int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();",
+                   "int firstButton = R.id.btnReorder;",
+                   "first button")
+          methods = '''
+              // ---- Adblock pill (the old reorder pill): Private DNS on AdGuard DNS, or back to automatic ----
+              private static final String ADBLOCK_HOST = "dns.adguard-dns.com";
+              private ColorStateList adblockPlainInk;
+
+              private boolean adblockIsOn() {
+                  try {
+                      android.content.ContentResolver cr = getContentResolver();
+                      return "hostname".equals(Settings.Global.getString(cr, "private_dns_mode"))
+                              && ADBLOCK_HOST.equals(Settings.Global.getString(cr, "private_dns_specifier"));
+                  } catch (Exception e) {
+                      return false;
+                  }
+              }
+
+              private void refreshAdBlock() {
+                  boolean on = adblockIsOn();
+                  btnReorder.setContentDescription(on ? "Adblock activ\\u00e9" : "Adblock d\\u00e9sactiv\\u00e9");
+                  ((TextView) btnReorder).setCompoundDrawableTintList(on ? ColorStateList.valueOf(0xFF34C759) : adblockPlainInk);
+              }
+
+              private void toggleAdBlock() {
+                  boolean turnOn = !adblockIsOn();
+                  try {
+                      android.content.ContentResolver cr = getContentResolver();
+                      if (turnOn) {
+                          Settings.Global.putString(cr, "private_dns_specifier", ADBLOCK_HOST);
+                          Settings.Global.putString(cr, "private_dns_mode", "hostname");
+                      } else {
+                          Settings.Global.putString(cr, "private_dns_mode", "opportunistic");
+                      }
+                      Toast.makeText(this, turnOn ? "Adblock activ\\u00e9" : "Adblock d\\u00e9sactiv\\u00e9", Toast.LENGTH_SHORT).show();
+                  } catch (SecurityException e) {
+                      Toast.makeText(this, "Adblock : autorisation manquante (commande pm grant)", Toast.LENGTH_LONG).show();
+                  }
+                  refreshAdBlock();
+              }
+          '''
+          k = t.rstrip().rfind("}")
+          if k < 0:
+              sys.exit("PATCH FAILED: class end")
+          t = t[:k] + methods + "}\n"
+          write(jp, t)
+          print("adblock patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -111,5 +242,6 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-outline
+          name: launcher-apk-final
           path: launcher/app/build/outputs/apk/release/app-release.apk
+
