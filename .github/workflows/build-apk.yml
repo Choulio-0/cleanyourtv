@@ -29,26 +29,52 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   f.write(s)
 
-          # 1. two tiny views that draw their text several times, so the black shadow builds up into an outline
+          # 1. two tiny views: a crisp black outline (stroked text), then the text itself in solid colour on top
           jdir = base + "java/com/gathin/tvhome/"
           def java_source(name, parent):
               lines = [
                   "package com.gathin.tvhome;",
                   "",
                   "import android.content.Context;",
+                  "import android.content.res.ColorStateList;",
                   "import android.graphics.Canvas;",
+                  "import android.graphics.Paint;",
                   "import android.util.AttributeSet;",
                   "import android.widget.%s;" % parent,
                   "",
-                  "/** %s that draws its text four times: the black shadow set in the layout then reads as an outline. */" % parent,
+                  "/** %s that draws a hard black outline around its text, then the text in solid colour on top. */" % parent,
                   "public class %s extends %s {" % (name, parent),
+                  "    private boolean outlining;",
+                  "",
                   "    public %s(Context context) { super(context); }" % name,
                   "    public %s(Context context, AttributeSet attrs) { super(context, attrs); }" % name,
                   "    public %s(Context context, AttributeSet attrs, int defStyleAttr) { super(context, attrs, defStyleAttr); }" % name,
                   "",
+                  "    /** The colour swaps in onDraw must not ask for another frame, or the view would redraw forever. */",
+                  "    @Override",
+                  "    public void invalidate() {",
+                  "        if (!outlining) super.invalidate();",
+                  "    }",
+                  "",
                   "    @Override",
                   "    protected void onDraw(Canvas canvas) {",
-                  "        for (int i = 0; i < 4; i++) super.onDraw(canvas);",
+                  "        Paint paint = getPaint();",
+                  "        ColorStateList colors = getTextColors();",
+                  "        int fill = getCurrentTextColor() | 0xFF000000;",
+                  "        outlining = true;",
+                  "        try {",
+                  "            paint.setStyle(Paint.Style.STROKE);",
+                  "            paint.setStrokeJoin(Paint.Join.ROUND);",
+                  "            paint.setStrokeWidth(3f + paint.getTextSize() * 0.04f);",
+                  "            setTextColor(0xFF000000);",
+                  "            super.onDraw(canvas);",
+                  "            paint.setStyle(Paint.Style.FILL);",
+                  "            setTextColor(fill);",
+                  "            super.onDraw(canvas);",
+                  "        } finally {",
+                  "            setTextColor(colors);",
+                  "            outlining = false;",
+                  "        }",
                   "    }",
                   "}",
                   "",
@@ -57,10 +83,9 @@ jobs:
           write(jdir + "OutlineTextView.java", java_source("OutlineTextView", "TextView"))
           write(jdir + "OutlineTextClock.java", java_source("OutlineTextClock", "TextClock"))
 
-          # 2. header texts: same views, new class, black shadow all around
+          # 2. header texts: same views, new class; the date smaller
           path = res + "layout/activity_main.xml"
           s = read(path)
-          SHADOW = 'android:shadowColor="#FF000000" android:shadowRadius="5" android:shadowDx="0" android:shadowDy="0"'
           targets = {"greeting": "TextView", "clock": "TextClock", "ampm": "TextClock", "date": "TextClock",
                      "heroName": "TextView", "heroMeta": "TextView"}
           for name, tag in targets.items():
@@ -74,13 +99,11 @@ jobs:
               if not block.startswith("<" + tag) or not block.rstrip().endswith("/"):
                   sys.exit("PATCH FAILED: unexpected shape for %s" % name)
               new = "<com.gathin.tvhome.Outline" + block[1:]
-              new = new.replace(key, key + " " + SHADOW, 1)
               if name == "date":
                   new, n = re.subn(r'android:textSize="\d+sp"', 'android:textSize="12sp"', new)
                   if n != 1:
                       sys.exit("PATCH FAILED: date size")
               s = s[:start] + new + s[end:]
-          write(path, s)
           anchor = 'android:paddingTop="26dp"'
           if s.count(anchor) != 1:
               sys.exit("PATCH FAILED: header anchor")
@@ -224,5 +247,6 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-wallpaper
+          name: launcher-apk-contour
           path: launcher/app/build/outputs/apk/release/app-release.apk
+
