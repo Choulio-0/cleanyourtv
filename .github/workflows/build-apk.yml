@@ -717,6 +717,448 @@ jobs:
           write(mp, s)
           print("wifi patch applied")
           PY
+      - name: Play Store button redirect
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. WindowRedirect: app_keys "window:<package>:<target>" entries
+          write(jdir + "WindowRedirect.java", """package com.gathin.tvhome;
+
+          import android.os.SystemClock;
+
+          import java.util.HashMap;
+          import java.util.Map;
+
+          /**
+           * app_keys "window:<package>:<target>" entries, for a remote button that the firmware answers below Android
+           * (the Play Store button): when <package> comes up by itself, <target> is opened instead. Nothing filters keys,
+           * so a held volume key keeps ramping. Anything this launcher opens itself (a dock tile, the app library) is left
+           * alone for a few seconds, so the Play Store tile still opens the Play Store.
+           */
+          final class WindowRedirect {
+              /** How long after the launcher opens an app a window change is the launcher's own doing. */
+              static final long OWN_LAUNCH_MS = 6000;
+              /** Minimum gap between two redirects, so the window that comes up with the target never loops. */
+              static final long COOLDOWN_MS = 4000;
+
+              private static volatile long ownLaunchUntil;
+
+              private WindowRedirect() {
+              }
+
+              /** The launcher is about to open an app itself. */
+              static void ownLaunch() {
+                  ownLaunchUntil = SystemClock.elapsedRealtime() + OWN_LAUNCH_MS;
+              }
+
+              /** package -> target from the "window:" entries; other entries are skipped. */
+              static Map<String, String> parse(Iterable<String> entries) {
+                  Map<String, String> map = new HashMap<>();
+                  for (String entry : entries) {
+                      if (entry == null) continue;
+                      String text = entry.trim();
+                      if (!text.startsWith("window:")) continue;
+                      String[] parts = text.substring("window:".length()).split(":", 2);
+                      if (parts.length != 2) continue;
+                      String from = parts[0].trim(), to = parts[1].trim();
+                      if (!from.isEmpty() && !to.isEmpty()) map.put(from, to);
+                  }
+                  return map;
+              }
+
+              /** Whether a redirect may run now: not right after an own launch, not right after the last redirect. */
+              static boolean due(long now, long lastRedirect) {
+                  return now >= ownLaunchUntil && (lastRedirect == 0 || now - lastRedirect >= COOLDOWN_MS);
+              }
+          }
+          """)
+
+          # 2. InputKeyService: watch window changes and open the target
+          ip = jdir + "InputKeyService.java"
+          s = read(ip)
+          s = once(s, "    private boolean consumeVolumeKeys;\n",
+                   "    private boolean consumeVolumeKeys;\n"
+                   "    /** app_keys \"window:\" entries: a package the firmware opens by itself, and what to open instead. */\n"
+                   "    private Map<String, String> windowRedirects = Collections.emptyMap();\n"
+                   "    private long lastRedirect;\n", "field")
+          s = once(s, "        RemoteKeys.applyKeyFilter(this, config.keyFilter);\n",
+                   "        RemoteKeys.applyKeyFilter(this, config.keyFilter);\n"
+                   "        windowRedirects = WindowRedirect.parse(config.appKeys);\n"
+                   "        if (!windowRedirects.isEmpty()) {\n"
+                   "            // input_key_service.xml subscribes to no events; window changes are only wanted for these entries.\n"
+                   "            android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();\n"
+                   "            if (info != null) {\n"
+                   "                info.eventTypes |= AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;\n"
+                   "                setServiceInfo(info);\n"
+                   "            }\n"
+                   "        }\n", "connected")
+          s = once(s, "    public void onAccessibilityEvent(AccessibilityEvent event) {\n    }\n",
+                   "    public void onAccessibilityEvent(AccessibilityEvent event) {\n"
+                   "        if (windowRedirects.isEmpty() || event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;\n"
+                   "        CharSequence pkg = event.getPackageName();\n"
+                   "        String target = pkg == null ? null : windowRedirects.get(pkg.toString());\n"
+                   "        if (target == null) return;\n"
+                   "        long now = android.os.SystemClock.elapsedRealtime();\n"
+                   "        if (!WindowRedirect.due(now, lastRedirect)) return;\n"
+                   "        lastRedirect = now;\n"
+                   "        RemoteKeys.launch(this, target);\n"
+                   "    }\n", "event")
+          write(ip, s)
+
+          # 3. everything the launcher opens itself is marked, so the redirect never catches it
+          ap = jdir + "AppAdapter.java"
+          s = read(ap)
+          s = once(s, "        try {\n            ctx.startActivity(i);\n            if (cinematic) LastOpened.record(ctx, e.pkg);",
+                   "        try {\n            WindowRedirect.ownLaunch();\n            ctx.startActivity(i);\n            if (cinematic) LastOpened.record(ctx, e.pkg);",
+                   "app adapter")
+          write(ap, s)
+
+          lp = jdir + "AppLibraryDialog.java"
+          s = read(lp)
+          s = once(s, "        try { activity.startActivity(intent); }",
+                   "        try { WindowRedirect.ownLaunch(); activity.startActivity(intent); }", "library")
+          write(lp, s)
+
+          mp = jdir + "MainActivity.java"
+          s = read(mp)
+          s = once(s, "        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);\n        try {\n            startActivity(i);\n        } catch (ActivityNotFoundException | SecurityException e) {",
+                   "        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);\n        try {\n            WindowRedirect.ownLaunch();\n            startActivity(i);\n        } catch (ActivityNotFoundException | SecurityException e) {",
+                   "main open")
+          write(mp, s)
+          print("redirect patch applied")
+          PY
+      - name: Volume bar
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. the bar itself: a dark pill, the number on top, a track filling from the bottom, a speaker underneath
+          write(jdir + "VolumeBarView.java", """package com.gathin.tvhome;
+
+          import android.content.Context;
+          import android.graphics.Canvas;
+          import android.graphics.Paint;
+          import android.graphics.Path;
+          import android.graphics.RectF;
+          import android.graphics.Typeface;
+          import android.view.View;
+
+          /** The volume bar: a dark pill with the number on top, a track that fills from the bottom, and a speaker. */
+          final class VolumeBarView extends View {
+              private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+              private final RectF rect = new RectF();
+              private final Path path = new Path();
+              private final float d;
+              private float level;
+              private int number;
+              private boolean muted;
+
+              VolumeBarView(Context context) {
+                  super(context);
+                  d = context.getResources().getDisplayMetrics().density;
+              }
+
+              void set(int number, float level, boolean muted) {
+                  this.number = number;
+                  this.level = Math.max(0f, Math.min(1f, level));
+                  this.muted = muted;
+                  invalidate();
+              }
+
+              @Override
+              protected void onDraw(Canvas canvas) {
+                  float w = getWidth(), h = getHeight(), cx = w / 2f;
+                  // pill, opaque enough to hide whatever bar the firmware draws underneath
+                  paint.setStyle(Paint.Style.FILL);
+                  paint.setColor(0xFF17181C);
+                  rect.set(0, 0, w, h);
+                  canvas.drawRoundRect(rect, cx, cx, paint);
+                  paint.setStyle(Paint.Style.STROKE);
+                  paint.setStrokeWidth(d);
+                  paint.setColor(0x33FFFFFF);
+                  rect.set(d / 2f, d / 2f, w - d / 2f, h - d / 2f);
+                  canvas.drawRoundRect(rect, cx, cx, paint);
+
+                  // number
+                  paint.setStyle(Paint.Style.FILL);
+                  paint.setColor(0xFFFFFFFF);
+                  paint.setTextAlign(Paint.Align.CENTER);
+                  paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                  paint.setTextSize(20f * d);
+                  canvas.drawText(String.valueOf(muted ? 0 : number), cx, w * 0.66f, paint);
+
+                  // track and fill
+                  float zone = w * 1.0f;
+                  float trackTop = zone + 2f * d, trackBottom = h - zone - 2f * d, tw = 7f * d;
+                  rect.set(cx - tw / 2f, trackTop, cx + tw / 2f, trackBottom);
+                  paint.setColor(0x40FFFFFF);
+                  canvas.drawRoundRect(rect, tw / 2f, tw / 2f, paint);
+                  if (!muted && level > 0f) {
+                      float fill = Math.max(tw, (trackBottom - trackTop) * level);
+                      rect.set(cx - tw / 2f, trackBottom - fill, cx + tw / 2f, trackBottom);
+                      paint.setColor(0xFFFFFFFF);
+                      canvas.drawRoundRect(rect, tw / 2f, tw / 2f, paint);
+                  }
+
+                  // speaker, on a 24-unit grid centred in the bottom zone
+                  float s = (w * 0.36f) / 24f;
+                  float x0 = cx - 12f * s, y0 = h - zone / 2f - 12f * s;
+                  paint.setStyle(Paint.Style.FILL);
+                  paint.setColor(0xFFFFFFFF);
+                  path.reset();
+                  path.moveTo(x0 + 3f * s, y0 + 9f * s);
+                  path.lineTo(x0 + 7f * s, y0 + 9f * s);
+                  path.lineTo(x0 + 12f * s, y0 + 4f * s);
+                  path.lineTo(x0 + 12f * s, y0 + 20f * s);
+                  path.lineTo(x0 + 7f * s, y0 + 15f * s);
+                  path.lineTo(x0 + 3f * s, y0 + 15f * s);
+                  path.close();
+                  canvas.drawPath(path, paint);
+                  paint.setStyle(Paint.Style.STROKE);
+                  paint.setStrokeWidth(1.8f * s);
+                  paint.setStrokeCap(Paint.Cap.ROUND);
+                  if (muted) {
+                      canvas.drawLine(x0 + 15f * s, y0 + 9f * s, x0 + 21f * s, y0 + 15f * s, paint);
+                      canvas.drawLine(x0 + 21f * s, y0 + 9f * s, x0 + 15f * s, y0 + 15f * s, paint);
+                  } else {
+                      rect.set(x0 + 7f * s, y0 + 7f * s, x0 + 17f * s, y0 + 17f * s);
+                      canvas.drawArc(rect, -50f, 100f, false, paint);
+                      if (level > 0.5f) {
+                          rect.set(x0 + 3f * s, y0 + 3f * s, x0 + 21f * s, y0 + 21f * s);
+                          canvas.drawArc(rect, -50f, 100f, false, paint);
+                      }
+                  }
+                  paint.setStrokeCap(Paint.Cap.BUTT);
+              }
+          }
+          """)
+
+          # 2. the overlay: shown by the input key service whenever the music volume or its mute state changes
+          write(jdir + "VolumeOverlay.java", """package com.gathin.tvhome;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.IntentFilter;
+          import android.graphics.PixelFormat;
+          import android.media.AudioManager;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.Gravity;
+          import android.view.WindowManager;
+
+          /**
+           * app_keys "volume_bar[:width:height:margin:offset]" entry (sizes in dp): a small bar drawn above every app,
+           * on the right edge, whenever the music volume or its mute state changes. It reacts to Android's own volume
+           * broadcasts, so it never touches the keys and a held volume key keeps ramping. It is sized to sit over the bar
+           * the firmware draws, and sits above it: an accessibility overlay outranks the system's own windows.
+           */
+          final class VolumeOverlay {
+              static final String ENTRY = "volume_bar";
+              static final String VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION";
+              static final String MUTE_CHANGED = "android.media.STREAM_MUTE_CHANGED_ACTION";
+              static final String EXTRA_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
+              static final long SHOW_MS = 2200;
+              static final long FADE_MS = 220;
+              /** width, height, margin from the right edge, offset below the vertical centre; all in dp. */
+              static final int[] DEFAULTS = {64, 316, 18, 6};
+
+              private final Context context;
+              private final int[] dims;
+              private final WindowManager windows;
+              private final AudioManager audio;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private final Runnable hide = this::fadeOut;
+              private BroadcastReceiver receiver;
+              private VolumeBarView view;
+
+              VolumeOverlay(Context service, int[] dims) {
+                  this.context = service;
+                  this.dims = dims;
+                  this.windows = (WindowManager) service.getSystemService(Context.WINDOW_SERVICE);
+                  this.audio = (AudioManager) service.getSystemService(Context.AUDIO_SERVICE);
+              }
+
+              private static int clamp(int v, int lo, int hi) {
+                  return Math.max(lo, Math.min(hi, v));
+              }
+
+              /** The sizes from the first "volume_bar" entry, or null when the list has none. */
+              static int[] parse(Iterable<String> entries) {
+                  for (String entry : entries) {
+                      if (entry == null) continue;
+                      String text = entry.trim();
+                      if (!text.equals(ENTRY) && !text.startsWith(ENTRY + ":")) continue;
+                      int[] dims = DEFAULTS.clone();
+                      String[] parts = text.split(":");
+                      for (int i = 1; i < parts.length && i <= 4; i++) {
+                          try {
+                              dims[i - 1] = Integer.parseInt(parts[i].trim());
+                          } catch (NumberFormatException ignored) {
+                          }
+                      }
+                      dims[0] = clamp(dims[0], 24, 200);
+                      dims[1] = clamp(dims[1], 100, 800);
+                      dims[2] = clamp(dims[2], -50, 400);
+                      dims[3] = clamp(dims[3], -400, 400);
+                      return dims;
+                  }
+                  return null;
+              }
+
+              void start() {
+                  if (receiver != null || windows == null || audio == null) return;
+                  receiver = new BroadcastReceiver() {
+                      @Override
+                      public void onReceive(Context c, Intent intent) {
+                          if (intent == null) return;
+                          if (intent.getIntExtra(EXTRA_STREAM_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
+                          show();
+                      }
+                  };
+                  IntentFilter filter = new IntentFilter(VOLUME_CHANGED);
+                  filter.addAction(MUTE_CHANGED);
+                  try {
+                      context.registerReceiver(receiver, filter);
+                  } catch (RuntimeException e) {
+                      receiver = null;
+                  }
+              }
+
+              void stop() {
+                  handler.removeCallbacks(hide);
+                  if (receiver != null) {
+                      try {
+                          context.unregisterReceiver(receiver);
+                      } catch (RuntimeException ignored) {
+                      }
+                      receiver = null;
+                  }
+                  detach();
+              }
+
+              private WindowManager.LayoutParams params() {
+                  float d = context.getResources().getDisplayMetrics().density;
+                  WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                          Math.round(dims[0] * d), Math.round(dims[1] * d),
+                          WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                  | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                          PixelFormat.TRANSLUCENT);
+                  lp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+                  lp.x = Math.round(dims[2] * d);
+                  lp.y = Math.round(dims[3] * d);
+                  lp.setTitle("tvhome volume bar");
+                  return lp;
+              }
+
+              private void show() {
+                  int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                  int vol = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                  boolean muted = audio.isStreamMute(AudioManager.STREAM_MUSIC);
+                  float level = max > 0 ? (float) vol / max : 0f;
+                  int number = max > 0 ? Math.round(level * 100f) : vol;
+                  handler.removeCallbacks(hide);
+                  if (view == null) {
+                      VolumeBarView bar = new VolumeBarView(context);
+                      try {
+                          windows.addView(bar, params());
+                      } catch (RuntimeException e) {
+                          return;
+                      }
+                      view = bar;
+                  } else {
+                      view.animate().cancel();
+                  }
+                  view.setAlpha(1f);
+                  view.set(number, level, muted);
+                  handler.postDelayed(hide, SHOW_MS);
+              }
+
+              private void fadeOut() {
+                  if (view == null) return;
+                  view.animate().alpha(0f).setDuration(FADE_MS).withEndAction(this::detach).start();
+              }
+
+              private void detach() {
+                  if (view == null) return;
+                  try {
+                      windows.removeViewImmediate(view);
+                  } catch (RuntimeException ignored) {
+                  }
+                  view = null;
+              }
+          }
+          """)
+
+          # 3. InputKeyService owns it
+          ip = jdir + "InputKeyService.java"
+          s = read(ip)
+          s = once(s, "    private boolean consumeVolumeKeys;\n",
+                   "    private boolean consumeVolumeKeys;\n"
+                   "    /** app_keys \"volume_bar\" entry: the small volume bar drawn over the firmware's own. */\n"
+                   "    private VolumeOverlay volumeBar;\n", "field")
+          s = once(s, "        RemoteKeys.applyKeyFilter(this, config.keyFilter);\n",
+                   "        RemoteKeys.applyKeyFilter(this, config.keyFilter);\n"
+                   "        if (volumeBar != null) {\n"
+                   "            volumeBar.stop();\n"
+                   "            volumeBar = null;\n"
+                   "        }\n"
+                   "        int[] barDims = VolumeOverlay.parse(config.appKeys);\n"
+                   "        if (barDims != null) {\n"
+                   "            volumeBar = new VolumeOverlay(this, barDims);\n"
+                   "            volumeBar.start();\n"
+                   "        }\n", "connected")
+          s = once(s, "        RemoteKeys.release(this);\n        if (repairRecord) ServiceRepair.disconnected(this, getClass());\n",
+                   "        RemoteKeys.release(this);\n        if (volumeBar != null) volumeBar.stop();\n"
+                   "        if (repairRecord) ServiceRepair.disconnected(this, getClass());\n", "unbind")
+          s = once(s, "        RemoteKeys.release(this);\n        if (gamepads != null) gamepads.stop();\n",
+                   "        RemoteKeys.release(this);\n        if (volumeBar != null) volumeBar.stop();\n"
+                   "        if (gamepads != null) gamepads.stop();\n", "destroy")
+          write(ip, s)
+          print("volume bar patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -724,5 +1166,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-wifi
+          name: launcher-apk-volume
           path: launcher/app/build/outputs/apk/release/app-release.apk
