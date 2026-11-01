@@ -240,6 +240,483 @@ jobs:
           write(sp, u)
           print("wallpaper patch applied")
           PY
+      - name: Wi-Fi popup
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. WifiBars: four rising signal bars that follow the row's focus colours
+          write(jdir + "WifiBars.java", """package com.gathin.tvhome;
+
+          import android.content.Context;
+          import android.graphics.Canvas;
+          import android.graphics.Paint;
+          import android.graphics.RectF;
+          import android.util.AttributeSet;
+          import android.view.View;
+
+          /** Four rising signal bars: the first `level` are solid, the rest faint. White, dark while the row is focused. */
+          public class WifiBars extends View {
+              private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+              private final RectF rect = new RectF();
+              private int level = 4;
+
+              public WifiBars(Context context) {
+                  this(context, null);
+              }
+
+              public WifiBars(Context context, AttributeSet attrs) {
+                  super(context, attrs);
+              }
+
+              public void setLevel(int level) {
+                  this.level = Math.max(0, Math.min(4, level));
+                  invalidate();
+              }
+
+              @Override
+              protected void drawableStateChanged() {
+                  super.drawableStateChanged();
+                  invalidate();
+              }
+
+              private boolean focusedState() {
+                  for (int s : getDrawableState()) {
+                      if (s == android.R.attr.state_focused) return true;
+                  }
+                  return false;
+              }
+
+              @Override
+              protected void onDraw(Canvas canvas) {
+                  super.onDraw(canvas);
+                  boolean dark = focusedState();
+                  int solid = dark ? 0xFF111111 : 0xFFFFFFFF;
+                  int faint = dark ? 0x33111111 : 0x44FFFFFF;
+                  float w = getWidth(), h = getHeight();
+                  float gap = w * 0.12f;
+                  float barW = (w - 3 * gap) / 4f;
+                  float[] heights = {0.38f, 0.60f, 0.80f, 1.00f};
+                  for (int i = 0; i < 4; i++) {
+                      float left = i * (barW + gap);
+                      float top = h * (1f - heights[i]);
+                      rect.set(left, top, left + barW, h);
+                      paint.setColor(i < level ? solid : faint);
+                      canvas.drawRoundRect(rect, barW * 0.3f, barW * 0.3f, paint);
+                  }
+              }
+          }
+          """)
+
+          # 2. layouts: a network row, the caption line and the header with the connected network
+          FONT_M = '@string/font_medium'
+          FONT_B = '@string/font_body'
+          write(res + "layout/item_wifi.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="42dp"
+              android:orientation="horizontal"
+              android:gravity="center_vertical"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp"
+              android:background="@drawable/input_row_bg"
+              android:focusable="true"
+              android:clickable="true">
+
+              <com.gathin.tvhome.WifiBars
+                  android:id="@+id/wifiRowBars"
+                  android:layout_width="20dp"
+                  android:layout_height="16dp"
+                  android:duplicateParentState="true" />
+
+              <TextView
+                  android:id="@+id/wifiRowTitle"
+                  android:layout_width="0dp"
+                  android:layout_height="wrap_content"
+                  android:layout_weight="1"
+                  android:layout_marginStart="10dp"
+                  android:layout_marginEnd="12dp"
+                  android:textColor="@drawable/pill_text"
+                  android:duplicateParentState="true"
+                  android:textSize="15sp"
+                  android:fontFamily="%s"
+                  android:singleLine="true" />
+
+              <ImageView
+                  android:id="@+id/wifiRowLock"
+                  android:layout_width="12dp"
+                  android:layout_height="12dp"
+                  android:layout_marginEnd="8dp"
+                  android:src="@drawable/ic_lock"
+                  android:tint="@drawable/pill_text_dim"
+                  android:duplicateParentState="true"
+                  android:contentDescription="@null" />
+
+              <TextView
+                  android:id="@+id/wifiRowStatus"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:textColor="@drawable/pill_text_dim"
+                  android:duplicateParentState="true"
+                  android:textSize="11sp"
+                  android:fontFamily="%s"
+                  android:letterSpacing="0.04" />
+          </LinearLayout>
+          """ % (FONT_M, FONT_B))
+
+          write(res + "layout/item_wifi_caption.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <TextView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp"
+              android:paddingTop="8dp"
+              android:paddingBottom="6dp"
+              android:textColor="#73FFFFFF"
+              android:textSize="11sp"
+              android:fontFamily="%s"
+              android:letterSpacing="0.06" />
+          """ % FONT_B)
+
+          write(res + "layout/popup_wifi_header.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp"
+              android:paddingTop="10dp"
+              android:paddingBottom="6dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <com.gathin.tvhome.WifiBars
+                      android:id="@+id/wifiHeadBars"
+                      android:layout_width="24dp"
+                      android:layout_height="19dp" />
+
+                  <ImageView
+                      android:id="@+id/wifiHeadIcon"
+                      android:layout_width="22dp"
+                      android:layout_height="22dp"
+                      android:src="@drawable/ic_ethernet"
+                      android:tint="#FFFFFFFF"
+                      android:visibility="gone"
+                      android:contentDescription="@null" />
+
+                  <TextView
+                      android:id="@+id/wifiHeadName"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:layout_marginStart="12dp"
+                      android:layout_marginEnd="12dp"
+                      android:textColor="#FFFFFFFF"
+                      android:textSize="18sp"
+                      android:fontFamily="%s"
+                      android:singleLine="true" />
+
+                  <View
+                      android:id="@+id/wifiHeadDot"
+                      android:layout_width="7dp"
+                      android:layout_height="7dp"
+                      android:layout_marginEnd="8dp"
+                      android:background="@drawable/status_dot" />
+
+                  <TextView
+                      android:id="@+id/wifiHeadState"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:textColor="#99FFFFFF"
+                      android:textSize="11sp"
+                      android:fontFamily="%s"
+                      android:letterSpacing="0.04" />
+              </LinearLayout>
+
+              <TextView
+                  android:id="@+id/wifiHeadDetails"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_marginStart="36dp"
+                  android:layout_marginTop="4dp"
+                  android:textColor="#A6FFFFFF"
+                  android:textSize="12sp"
+                  android:fontFamily="%s"
+                  android:lineSpacingExtra="2dp" />
+          </LinearLayout>
+          """ % (FONT_M, FONT_B, FONT_B))
+
+          # 3. MainActivity: the Wi-Fi pill (and the gear menu's Network row) open the popup
+          mp = jdir + "MainActivity.java"
+          s = read(mp)
+          s = once(s, "btnWifi.setOnClickListener(v -> openNetworkPill());",
+                   "btnWifi.setOnClickListener(v -> onNetworkPill());", "wifi pill click")
+          s = once(s, "R.string.quick_network), -1, this::openNetworkPill);",
+                   "R.string.quick_network), -1, this::onNetworkPill);", "menu network row")
+
+          BLOCK = r'''    // ---- Wi-Fi popup: the connected network, its signal, and the networks around ------------------------
+
+              /** Wi-Fi pill: a configured VPN app still wins, otherwise the popup. */
+              private void onNetworkPill() {
+                  if (!vpnPill && vpnAppIntent() != null) {
+                      openNetworkPill();
+                      return;
+                  }
+                  showWifiPopup();
+              }
+
+              /** French when the TV is set to French, English otherwise. */
+              private String wifiText(String fr, String en) {
+                  return "fr".equals(Locale.getDefault().getLanguage()) ? fr : en;
+              }
+
+              private static String wifiBand(int mhz) {
+                  if (mhz <= 0) return "";
+                  if (mhz < 3000) return "2,4 GHz";
+                  if (mhz < 5900) return "5 GHz";
+                  return "6 GHz";
+              }
+
+              private static String wifiIpv4(ConnectivityManager cm, Network net) {
+                  try {
+                      android.net.LinkProperties lp = cm.getLinkProperties(net);
+                      if (lp == null) return null;
+                      for (android.net.LinkAddress la : lp.getLinkAddresses()) {
+                          java.net.InetAddress a = la.getAddress();
+                          if (a instanceof java.net.Inet4Address && !a.isLoopbackAddress()) return a.getHostAddress();
+                      }
+                  } catch (Exception ignored) {
+                  }
+                  return null;
+              }
+
+              private String wifiQuality(int level) {
+                  String[] fr = {"Très faible", "Faible", "Moyen", "Bon", "Excellent"};
+                  String[] en = {"Very weak", "Weak", "Fair", "Good", "Excellent"};
+                  int i = Math.max(0, Math.min(4, level));
+                  return wifiText(fr[i], en[i]);
+              }
+
+              private void showWifiPopup() {
+                  boolean underGear = topMenu;
+                  View anchor = underGear || btnWifi.getVisibility() != View.VISIBLE ? findViewById(R.id.btnSettings) : btnWifi;
+                  View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+                  LinearLayout rows = panel.findViewById(R.id.rows);
+                  final PopupWindow popup = glassPopup(panel, (int) (340 * density));
+
+                  WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                  ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                  boolean wifiUp = false, ethUp = false;
+                  String wifiIp = null, ethIp = null;
+                  try {
+                      for (Network net : cm != null ? cm.getAllNetworks() : new Network[0]) {
+                          NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                          if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+                          if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue;
+                          if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                              ethUp = true;
+                              ethIp = wifiIpv4(cm, net);
+                          }
+                          if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                              wifiUp = true;
+                              wifiIp = wifiIpv4(cm, net);
+                          }
+                      }
+                  } catch (Exception ignored) {
+                  }
+
+                  // Header: what the TV is connected to right now.
+                  View head = getLayoutInflater().inflate(R.layout.popup_wifi_header, rows, false);
+                  WifiBars headBars = head.findViewById(R.id.wifiHeadBars);
+                  View headIcon = head.findViewById(R.id.wifiHeadIcon);
+                  TextView headName = head.findViewById(R.id.wifiHeadName);
+                  View headDot = head.findViewById(R.id.wifiHeadDot);
+                  TextView headState = head.findViewById(R.id.wifiHeadState);
+                  TextView headDetails = head.findViewById(R.id.wifiHeadDetails);
+                  String connectedSsid = "";
+                  if (ethUp) {
+                      headBars.setVisibility(View.GONE);
+                      headIcon.setVisibility(View.VISIBLE);
+                      headName.setText(R.string.ethernet);
+                      headState.setText(R.string.connected);
+                      headDetails.setText(ethIp != null ? "IP " + ethIp : "");
+                  } else if (wifiUp) {
+                      String ssid = "";
+                      int level = 3, rssi = 0, speed = -1, freq = 0;
+                      try {
+                          WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
+                          if (info != null) {
+                              String raw = info.getSSID();
+                              if (raw != null) {
+                                  raw = raw.replace("\"", "").trim();
+                                  if (!raw.isEmpty() && !raw.contains("unknown") && !raw.equals("0x")) ssid = raw;
+                              }
+                              rssi = info.getRssi();
+                              level = WifiManager.calculateSignalLevel(rssi, 5);
+                              speed = info.getLinkSpeed();
+                              freq = info.getFrequency();
+                          }
+                      } catch (Exception ignored) {
+                      }
+                      connectedSsid = ssid;
+                      headBars.setLevel(Math.max(1, level));
+                      headName.setText(ssid.isEmpty() ? getString(R.string.wifi) : ssid);
+                      headState.setText(R.string.connected);
+                      StringBuilder d = new StringBuilder(wifiQuality(level));
+                      if (rssi < 0) d.append(" (").append(rssi).append(" dBm)");
+                      if (freq > 0) d.append("  ·  ").append(wifiBand(freq));
+                      if (speed > 0) d.append("  ·  ").append(speed).append(" Mbps");
+                      if (wifiIp != null) d.append("\nIP ").append(wifiIp);
+                      headDetails.setText(d.toString());
+                  } else {
+                      boolean off = false;
+                      try {
+                          off = wm != null && !wm.isWifiEnabled();
+                      } catch (Exception ignored) {
+                      }
+                      headBars.setLevel(0);
+                      headName.setText(off ? wifiText("Wi-Fi désactivé", "Wi-Fi is off") : getString(R.string.offline));
+                      headDot.setVisibility(View.GONE);
+                      headState.setVisibility(View.GONE);
+                      headDetails.setVisibility(View.GONE);
+                  }
+                  rows.addView(head);
+                  addSeparator(rows);
+
+                  // Networks around: the last scan, refreshed when a new one lands.
+                  TextView caption = (TextView) getLayoutInflater().inflate(R.layout.item_wifi_caption, rows, false);
+                  caption.setText(wifiText("RÉSEAUX À PROXIMITÉ", "NEARBY NETWORKS"));
+                  rows.addView(caption);
+                  final LinearLayout netRows = new LinearLayout(this);
+                  netRows.setOrientation(LinearLayout.VERTICAL);
+                  rows.addView(netRows, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT));
+                  addSeparator(rows);
+                  final View manage = addInputRow(rows, popup, R.drawable.ic_wifi,
+                          wifiText("Changer de réseau…", "Change network…"), -1,
+                          () -> open(systemIntent(Settings.ACTION_WIFI_SETTINGS)));
+
+                  final WifiManager scanner = wm;
+                  final String current = connectedSsid;
+                  fillWifiNetworks(netRows, popup, scanner, current);
+                  final android.content.BroadcastReceiver rx = new android.content.BroadcastReceiver() {
+                      @Override
+                      public void onReceive(Context context, Intent intent) {
+                          if (popup.isShowing()) fillWifiNetworks(netRows, popup, scanner, current);
+                      }
+                  };
+                  boolean listening = false;
+                  if (wm != null) {
+                      try {
+                          registerReceiver(rx, new android.content.IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
+                          listening = true;
+                          wm.startScan();
+                      } catch (Exception ignored) {
+                      }
+                  }
+                  final boolean unregister = listening;
+                  popup.setOnDismissListener(() -> {
+                      if (openPopup == popup) openPopup = null;
+                      if (unregister) {
+                          try {
+                              unregisterReceiver(rx);
+                          } catch (Exception ignored) {
+                          }
+                      }
+                  });
+
+                  int alignment = getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.START : Gravity.END;
+                  dropIn(popup, panel, anchor, alignment);
+                  View first = netRows.getChildCount() > 0 && netRows.getChildAt(0).isFocusable() ? netRows.getChildAt(0) : manage;
+                  first.requestFocus();
+              }
+
+              /** Rebuilds the nearby-networks rows from the latest scan, keeping the focus where it was. */
+              private void fillWifiNetworks(LinearLayout netRows, PopupWindow popup, WifiManager wm, String connected) {
+                  int focused = -1;
+                  for (int i = 0; i < netRows.getChildCount(); i++) {
+                      if (netRows.getChildAt(i).hasFocus()) focused = i;
+                  }
+                  netRows.removeAllViews();
+
+                  // One row per network name, strongest first, without the one already shown in the header.
+                  List<android.net.wifi.ScanResult> found = new ArrayList<>();
+                  try {
+                      List<android.net.wifi.ScanResult> scan = wm != null ? wm.getScanResults() : null;
+                      if (scan != null) {
+                          for (android.net.wifi.ScanResult r : scan) {
+                              if (r.SSID == null || r.SSID.trim().isEmpty() || r.SSID.equals(connected)) continue;
+                              int dup = -1;
+                              for (int i = 0; i < found.size(); i++) {
+                                  if (found.get(i).SSID.equals(r.SSID)) dup = i;
+                              }
+                              if (dup < 0) found.add(r);
+                              else if (found.get(dup).level < r.level) found.set(dup, r);
+                          }
+                      }
+                  } catch (Exception ignored) {
+                  }
+                  Collections.sort(found, (a, b) -> b.level - a.level);
+
+                  if (found.isEmpty()) {
+                      TextView none = (TextView) getLayoutInflater().inflate(R.layout.item_wifi_caption, netRows, false);
+                      none.setTextSize(13);
+                      none.setText(wifiText("Recherche des réseaux…", "Looking for networks…"));
+                      netRows.addView(none);
+                      return;
+                  }
+                  for (int i = 0; i < found.size() && i < 6; i++) {
+                      android.net.wifi.ScanResult r = found.get(i);
+                      View row = getLayoutInflater().inflate(R.layout.item_wifi, netRows, false);
+                      ((WifiBars) row.findViewById(R.id.wifiRowBars)).setLevel(WifiManager.calculateSignalLevel(r.level, 5));
+                      ((TextView) row.findViewById(R.id.wifiRowTitle)).setText(r.SSID);
+                      String caps = r.capabilities != null ? r.capabilities : "";
+                      boolean secured = caps.contains("WPA") || caps.contains("WEP") || caps.contains("SAE") || caps.contains("EAP");
+                      row.findViewById(R.id.wifiRowLock).setVisibility(secured ? View.VISIBLE : View.GONE);
+                      ((TextView) row.findViewById(R.id.wifiRowStatus)).setText(wifiBand(r.frequency));
+                      // Joining a network needs the system page: Android 11 keeps that away from apps.
+                      row.setOnClickListener(v -> {
+                          popup.dismiss();
+                          open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
+                      });
+                      netRows.addView(row);
+                  }
+                  if (focused >= 0 && netRows.getChildCount() > 0) {
+                      netRows.getChildAt(Math.min(focused, netRows.getChildCount() - 1)).requestFocus();
+                  }
+              }
+
+          '''
+          marker = "    // ---- launcher settings and module cards"
+          s = once(s, marker, BLOCK + marker, "insert point")
+          write(mp, s)
+          print("wifi patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -247,6 +724,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-contour
+          name: launcher-apk-wifi
           path: launcher/app/build/outputs/apk/release/app-release.apk
-
