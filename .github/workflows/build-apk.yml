@@ -989,7 +989,7 @@ jobs:
           import android.view.WindowManager;
 
           /**
-           * app_keys "volume_bar[:width:height:margin:offset]" entry (sizes in dp): a small bar drawn above every app,
+           * app_keys "volume_bar[:width:height:margin:offset:duration]" entry (sizes in dp, duration in ms): a small bar drawn above every app,
            * on the right edge, whenever the music volume or its mute state changes. It reacts to Android's own volume
            * broadcasts, so it never touches the keys and a held volume key keeps ramping. It is sized to sit over the bar
            * the firmware draws, and sits above it: an accessibility overlay outranks the system's own windows.
@@ -999,10 +999,10 @@ jobs:
               static final String VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION";
               static final String MUTE_CHANGED = "android.media.STREAM_MUTE_CHANGED_ACTION";
               static final String EXTRA_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
-              static final long SHOW_MS = 2200;
+              static final int SHOW_MIN_MS = 1000, SHOW_MAX_MS = 30000;
               static final long FADE_MS = 220;
-              /** width, height, margin from the right edge, offset below the vertical centre; all in dp. */
-              static final int[] DEFAULTS = {64, 316, 18, 6};
+              /** width, height, margin from the right edge, offset below the vertical centre (dp), then how long it stays (ms). */
+              static final int[] DEFAULTS = {64, 316, 18, 6, 5000};
 
               private final Context context;
               private final int[] dims;
@@ -1032,7 +1032,7 @@ jobs:
                       if (!text.equals(ENTRY) && !text.startsWith(ENTRY + ":")) continue;
                       int[] dims = DEFAULTS.clone();
                       String[] parts = text.split(":");
-                      for (int i = 1; i < parts.length && i <= 4; i++) {
+                      for (int i = 1; i < parts.length && i <= 5; i++) {
                           try {
                               dims[i - 1] = Integer.parseInt(parts[i].trim());
                           } catch (NumberFormatException ignored) {
@@ -1042,6 +1042,7 @@ jobs:
                       dims[1] = clamp(dims[1], 100, 800);
                       dims[2] = clamp(dims[2], -50, 400);
                       dims[3] = clamp(dims[3], -400, 400);
+                      dims[4] = clamp(dims[4], SHOW_MIN_MS, SHOW_MAX_MS);
                       return dims;
                   }
                   return null;
@@ -1113,7 +1114,7 @@ jobs:
                   }
                   view.setAlpha(1f);
                   view.set(number, level, muted);
-                  handler.postDelayed(hide, SHOW_MS);
+                  handler.postDelayed(hide, dims[4]);
               }
 
               private void fadeOut() {
