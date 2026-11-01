@@ -1160,6 +1160,374 @@ jobs:
           write(ip, s)
           print("volume bar patch applied")
           PY
+      - name: Wallpaper picker strip
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          FONT_M = '@string/font_medium'
+          FONT_B = '@string/font_body'
+
+          # 1. layouts and drawable of the wallpaper strip
+          write(res + "drawable/wallpaper_thumb_bg.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#FF26262B" />
+              <corners android:radius="10dp" />
+          </shape>
+          """)
+
+          write(res + "layout/popup_wallpapers.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/wpPanel"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:background="@drawable/glass_panel"
+              android:padding="12dp"
+              android:elevation="12dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical"
+                  android:paddingStart="6dp"
+                  android:paddingEnd="6dp">
+
+                  <TextView
+                      android:id="@+id/wpTitle"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:textColor="#FFFFFFFF"
+                      android:textSize="16sp"
+                      android:fontFamily="%s"
+                      android:singleLine="true" />
+
+                  <TextView
+                      android:id="@+id/wpHint"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:textColor="#73FFFFFF"
+                      android:textSize="11sp"
+                      android:fontFamily="%s"
+                      android:letterSpacing="0.04" />
+              </LinearLayout>
+
+              <HorizontalScrollView
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:paddingTop="8dp"
+                  android:scrollbars="none"
+                  android:overScrollMode="never"
+                  android:clipToPadding="false">
+
+                  <LinearLayout
+                      android:id="@+id/wpRow"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:orientation="horizontal" />
+              </HorizontalScrollView>
+          </LinearLayout>
+          """ % (FONT_M, FONT_B))
+
+          write(res + "layout/item_wallpaper.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="wrap_content"
+              android:layout_height="wrap_content"
+              android:layout_marginEnd="6dp"
+              android:orientation="vertical"
+              android:padding="6dp"
+              android:background="@drawable/input_row_bg"
+              android:focusable="true"
+              android:clickable="true">
+
+              <FrameLayout
+                  android:layout_width="168dp"
+                  android:layout_height="94dp">
+
+                  <ImageView
+                      android:id="@+id/wpThumb"
+                      android:layout_width="match_parent"
+                      android:layout_height="match_parent"
+                      android:scaleType="centerCrop"
+                      android:background="@drawable/wallpaper_thumb_bg"
+                      android:clipToOutline="true"
+                      android:contentDescription="@null" />
+
+                  <View
+                      android:id="@+id/wpCurrent"
+                      android:layout_width="8dp"
+                      android:layout_height="8dp"
+                      android:layout_gravity="top|end"
+                      android:layout_margin="6dp"
+                      android:background="@drawable/status_dot" />
+              </FrameLayout>
+
+              <TextView
+                  android:id="@+id/wpName"
+                  android:layout_width="168dp"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="6dp"
+                  android:gravity="center_horizontal"
+                  android:textColor="@drawable/pill_text"
+                  android:duplicateParentState="true"
+                  android:textSize="13sp"
+                  android:fontFamily="%s"
+                  android:singleLine="true"
+                  android:ellipsize="end" />
+          </LinearLayout>
+          """ % FONT_M)
+
+          # 2. small thumbnails, decoded off the main thread
+          write(jdir + "WallpaperThumbs.java", """package com.gathin.tvhome;
+
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+
+          import java.io.File;
+
+          /** Small versions of the wallpapers for the picker's cards. */
+          final class WallpaperThumbs {
+              private WallpaperThumbs() {
+              }
+
+              /** The picture reduced to about w x h pixels or more, or null when it cannot be read. */
+              static Bitmap load(File file, int w, int h) {
+                  try {
+                      BitmapFactory.Options options = new BitmapFactory.Options();
+                      options.inJustDecodeBounds = true;
+                      BitmapFactory.decodeFile(file.getPath(), options);
+                      if (options.outWidth <= 0 || options.outHeight <= 0) return null;
+                      int sample = 1;
+                      while (options.outWidth / (sample * 2) >= w && options.outHeight / (sample * 2) >= h) sample *= 2;
+                      options.inJustDecodeBounds = false;
+                      options.inSampleSize = sample;
+                      options.inPreferredConfig = Bitmap.Config.RGB_565;
+                      return BitmapFactory.decodeFile(file.getPath(), options);
+                  } catch (Exception | OutOfMemoryError failure) {
+                      return null;
+                  }
+              }
+          }
+          """)
+
+          # 3. WallpaperPlayer: show a picture without choosing it, and put the real one back
+          wp = jdir + "WallpaperPlayer.java"
+          s = read(wp)
+          PREVIEW = '''    // ---- wallpaper picker: live preview -----------------------------------------------------------
+
+              private int previewToken;
+              /** The picture on screen when a preview started; null while no preview is running. */
+              private String beforePreview;
+
+              /** Shows a picture without choosing it, for the picker; endPreview() puts the real one back. */
+              void preview(File file) {
+                  if (closed) return;
+                  if (beforePreview == null) beforePreview = displayed;
+                  if (image.getParent() == null) {
+                      root.addView(image, 0, new FrameLayout.LayoutParams(
+                              ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                  }
+                  decodeAndShow(file, ++previewToken);
+              }
+
+              /** The preview of "no wallpaper". */
+              void previewNone() {
+                  if (closed) return;
+                  if (beforePreview == null) beforePreview = displayed;
+                  previewToken++;
+                  showNothing();
+              }
+
+              /** The picker was left without a choice: back to the picture that was on screen. */
+              void endPreview() {
+                  String name = beforePreview;
+                  beforePreview = null;
+                  int token = ++previewToken;
+                  if (closed || name == null) return;
+                  if (name.isEmpty()) {
+                      showNothing();
+                      return;
+                  }
+                  for (File candidate : files) {
+                      if (candidate.getName().equals(name)) {
+                          decodeAndShow(candidate, token);
+                          return;
+                      }
+                  }
+              }
+
+              private void decodeAndShow(File file, int token) {
+                  try {
+                      decoder.execute(() -> {
+                          Bitmap bitmap = decode(file);
+                          image.post(() -> {
+                              if (bitmap == null) return;
+                              if (closed || token != previewToken) {
+                                  bitmap.recycle();
+                                  return;
+                              }
+                              show(bitmap);
+                          });
+                      });
+                  } catch (java.util.concurrent.RejectedExecutionException ignored) {
+                  }
+              }
+
+              private void showNothing() {
+                  Bitmap old = current;
+                  current = null;
+                  image.setImageDrawable(null);
+                  root.setBackgroundColor(backgroundColor);
+                  if (old != null) image.postDelayed(old::recycle, 500);
+              }
+
+          '''
+          marker = "    /** Puts a picture on screen and releases the previous one after a frame has drawn the new one. */\n"
+          s = once(s, marker, PREVIEW + marker, "player marker")
+          write(wp, s)
+
+          # 4. MainActivity: the wallpaper pill opens the strip
+          mp = jdir + "MainActivity.java"
+          s = read(mp)
+          s = once(s, "        btnReorder.setOnClickListener(v -> startActivityForResult(\n"
+                      "                new Intent(this, LauncherSettingsActivity.class)\n"
+                      "                        .putExtra(LauncherSettingsActivity.EXTRA_WALLPAPER_ONLY, true),\n"
+                      "                LAUNCHER_SETTINGS_REQUEST));\n",
+                   "        btnReorder.setOnClickListener(v -> showWallpaperStrip());\n", "pill click")
+
+          BLOCK = r'''    // ---- Wallpaper strip: pick a wallpaper with a live preview ------------------------------------------
+
+              private String wallpaperLabel(java.io.File file) {
+                  String name = file.getName();
+                  if (name.equals(Config.WALLPAPER_NAME)) return wifiText("Fond du thème", "Theme wallpaper");
+                  int dot = name.lastIndexOf('.');
+                  if (dot > 0) name = name.substring(0, dot);
+                  return name.replace('_', ' ').replace('-', ' ');
+              }
+
+              private void showWallpaperStrip() {
+                  java.io.File dir = Config.dir(this);
+                  final List<java.io.File> images = new ArrayList<>(
+                          WallpaperRotation.images(dir == null ? null : new java.io.File(dir, "wallpapers")));
+                  // A theme with a single wallpaper.jpg offers that picture too (Config maps the choice back to it).
+                  java.io.File single = dir == null ? null : new java.io.File(dir, Config.WALLPAPER_NAME);
+                  if (single != null && single.isFile()) images.add(0, single);
+                  final android.content.SharedPreferences choices = getSharedPreferences(Config.SETTINGS_NAME, MODE_PRIVATE);
+                  final String current = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
+
+                  View panel = getLayoutInflater().inflate(R.layout.popup_wallpapers, root, false);
+                  ((TextView) panel.findViewById(R.id.wpTitle)).setText(wifiText("Fond d'écran", getString(R.string.wallpaper_label)));
+                  ((TextView) panel.findViewById(R.id.wpHint)).setText(
+                          wifiText("OK : choisir   ·   Retour : annuler", "OK: apply   ·   Back: cancel"));
+                  final LinearLayout row = panel.findViewById(R.id.wpRow);
+                  int width = getResources().getDisplayMetrics().widthPixels - (int) (56 * density);
+                  final PopupWindow popup = glassPopup(panel, width);
+                  final boolean[] applied = {false};
+                  final Runnable[] pending = {null};
+                  final List<ImageView> thumbViews = new ArrayList<>();
+                  final List<java.io.File> thumbFiles = new ArrayList<>();
+
+                  // Pictures first, then "none", then (only once a choice was made) the way back to what the theme decides.
+                  final boolean offerTheme = current != null;
+                  final boolean[] settling = {true};   // the card that starts focused shows what is already on screen
+                  int focusIndex = 0;
+                  for (int i = 0; i < images.size() + 1 + (offerTheme ? 1 : 0); i++) {
+                      final boolean none = i == images.size();
+                      final boolean theme = i > images.size();
+                      final java.io.File file = i < images.size() ? images.get(i) : null;
+                      View card = getLayoutInflater().inflate(R.layout.item_wallpaper, row, false);
+                      ImageView thumb = card.findViewById(R.id.wpThumb);
+                      ((TextView) card.findViewById(R.id.wpName)).setText(
+                              theme ? wifiText("Thème d'origine", getString(R.string.wallpaper_theme_default))
+                                      : none ? wifiText("Aucun fond", getString(R.string.wallpaper_none)) : wallpaperLabel(file));
+                      boolean isCurrent = file != null ? file.getName().equals(current)
+                              : none && WallpaperRotation.CHOICE_NONE.equals(current);
+                      card.findViewById(R.id.wpCurrent).setVisibility(isCurrent ? View.VISIBLE : View.GONE);
+                      if (isCurrent) focusIndex = i;
+                      if (file == null) {
+                          thumb.setScaleType(ImageView.ScaleType.CENTER);
+                          thumb.setImageResource(R.drawable.ic_wallpaper);
+                      } else {
+                          thumbViews.add(thumb);
+                          thumbFiles.add(file);
+                      }
+                      // Focus is the preview: the real wallpaper changes behind the strip as the cursor moves.
+                      card.setOnFocusChangeListener((v, hasFocus) -> {
+                          if (!hasFocus || settling[0]) return;
+                          if (pending[0] != null) root.removeCallbacks(pending[0]);
+                          pending[0] = () -> {
+                              if (file != null) wallpaperPlayer.preview(file);
+                              else if (theme && single != null && single.isFile()) wallpaperPlayer.preview(single);
+                              else wallpaperPlayer.previewNone();
+                          };
+                          root.postDelayed(pending[0], 150);
+                      });
+                      card.setOnClickListener(v -> {
+                          applied[0] = true;
+                          android.content.SharedPreferences.Editor edit = choices.edit();
+                          if (theme) edit.remove(Config.WALLPAPER_CHOICE_KEY);
+                          else edit.putString(Config.WALLPAPER_CHOICE_KEY, none ? WallpaperRotation.CHOICE_NONE : file.getName());
+                          edit.putLong(Config.SETTINGS_REVISION_KEY, choices.getLong(Config.SETTINGS_REVISION_KEY, 0) + 1).apply();
+                          popup.dismiss();
+                          Toast.makeText(this, R.string.wallpaper_applied, Toast.LENGTH_SHORT).show();
+                          recreate();
+                      });
+                      row.addView(card);
+                  }
+
+                  final int thumbW = (int) (168 * density), thumbH = (int) (94 * density);
+                  new Thread(() -> {
+                      for (int i = 0; i < thumbFiles.size(); i++) {
+                          final android.graphics.Bitmap bitmap = WallpaperThumbs.load(thumbFiles.get(i), thumbW, thumbH);
+                          final ImageView target = thumbViews.get(i);
+                          if (bitmap != null) target.post(() -> target.setImageBitmap(bitmap));
+                      }
+                  }, "wallpaper-thumbs").start();
+
+                  popup.setOnDismissListener(() -> {
+                      if (openPopup == popup) openPopup = null;
+                      if (pending[0] != null) root.removeCallbacks(pending[0]);
+                      if (!applied[0]) wallpaperPlayer.endPreview();
+                  });
+
+                  panel.setAlpha(0f);
+                  panel.setTranslationY(24 * density);
+                  popup.showAtLocation(root, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, (int) (24 * density));
+                  panel.animate().alpha(1f).translationY(0f).setDuration(reducedMotion ? Motion.REDUCED_MS : 220)
+                          .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+                  row.getChildAt(Math.min(focusIndex, row.getChildCount() - 1)).requestFocus();
+                  settling[0] = false;
+              }
+
+          '''
+          marker = "    // ---- launcher settings and module cards"
+          s = once(s, marker, BLOCK + marker, "insert point")
+          write(mp, s)
+          print("wallpaper strip patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -1167,5 +1535,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-volume
+          name: launcher-apk-strip
           path: launcher/app/build/outputs/apk/release/app-release.apk
