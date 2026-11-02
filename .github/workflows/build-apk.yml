@@ -1679,6 +1679,156 @@ jobs:
           write(mp, t)
           print("screensaver patch applied")
           PY
+      - name: Start-up intro video
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. the clip is pushed like the theme's own files
+          tp = jdir + "ThemeFiles.java"
+          s = read(tp)
+          s = once(s, '"wallpaper.jpg".equals(name) || "theme_revision".equals(name)',
+                   '"wallpaper.jpg".equals(name) || "theme_revision".equals(name) || "intro.mp4".equals(name)', "theme files")
+          write(tp, s)
+
+          # 2. the intro: a video, with its sound, played once at power-on; any key skips it, volume keys still work
+          write(jdir + "IntroActivity.java", """package com.gathin.tvhome;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.KeyEvent;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.FrameLayout;
+          import android.widget.VideoView;
+
+          import java.io.File;
+
+          /**
+           * The start-up intro: intro.mp4 from the theme folder, played once when the TV has just powered on (MainActivity
+           * starts it), with its sound. Any key skips it; the volume keys still change the volume.
+           */
+          public class IntroActivity extends Activity {
+              static final String FILE_NAME = "intro.mp4";
+
+              /** The pushed clip, or null when there is none. */
+              static File clip(Context ctx) {
+                  File dir = Config.dir(ctx);
+                  if (dir == null) return null;
+                  File file = new File(dir, FILE_NAME);
+                  return file.isFile() && file.length() > 0 ? file : null;
+              }
+
+              private boolean done;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  File file = clip(this);
+                  if (file == null) {
+                      end();
+                      return;
+                  }
+                  FrameLayout root = new FrameLayout(this);
+                  root.setBackgroundColor(0xFF000000);
+                  VideoView video = new VideoView(this);
+                  root.addView(video, new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+                  setContentView(root);
+                  getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE);
+                  video.setOnCompletionListener(player -> end());
+                  video.setOnErrorListener((player, what, extra) -> {
+                      end();
+                      return true;
+                  });
+                  video.setVideoPath(file.getPath());
+                  video.start();
+              }
+
+              @Override
+              protected void onPause() {
+                  super.onPause();
+                  end();   // never left behind in the back stack
+              }
+
+              @Override
+              public boolean dispatchKeyEvent(KeyEvent event) {
+                  int key = event.getKeyCode();
+                  if (key == KeyEvent.KEYCODE_VOLUME_UP || key == KeyEvent.KEYCODE_VOLUME_DOWN
+                          || key == KeyEvent.KEYCODE_VOLUME_MUTE) {
+                      return super.dispatchKeyEvent(event);
+                  }
+                  if (event.getAction() == KeyEvent.ACTION_UP) end();
+                  return true;
+              }
+
+              private void end() {
+                  if (done) return;
+                  done = true;
+                  finish();
+                  overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+              }
+          }
+          """)
+          mp = base + "AndroidManifest.xml"
+          s = read(mp)
+          s = once(s, "        <!-- The same clock, started by Home itself after home_idle_clock_minutes without input. -->\n",
+                   '''        <!-- The start-up intro (intro.mp4), started by Home once after the TV powers on. -->
+                  <activity
+                      android:name=".IntroActivity"
+                      android:exported="false"
+                      android:excludeFromRecents="true"
+                      android:noHistory="true"
+                      android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
+                  <!-- The same clock, started by Home itself after home_idle_clock_minutes without input. -->
+          ''', "manifest")
+          write(mp, s)
+
+          # 3. Home starts it, once per process, only just after power-on
+          hp = jdir + "MainActivity.java"
+          s = read(hp)
+          s = once(s, "    private View btnSaver;\n", "    private View btnSaver;\n    private static boolean introChecked;\n", "intro field")
+          s = once(s, "        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_main);\n",
+                   "        super.onCreate(savedInstanceState);\n"
+                   "        if (!introChecked) {\n"
+                   "            introChecked = true;\n"
+                   "            // Only when the TV has just powered on: a reinstall, a theme push or a crash restart is not a start-up.\n"
+                   "            if (savedInstanceState == null && SystemClock.elapsedRealtime() < 5 * 60_000L\n"
+                   "                    && IntroActivity.clip(this) != null) {\n"
+                   "                try {\n"
+                   "                    startActivity(new Intent(this, IntroActivity.class));\n"
+                   "                } catch (RuntimeException ignored) {\n"
+                   "                }\n"
+                   "            }\n"
+                   "        }\n"
+                   "        setContentView(R.layout.activity_main);\n", "intro start")
+          write(hp, s)
+          print("intro patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -1686,5 +1836,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-saver
+          name: launcher-apk-intro
           path: launcher/app/build/outputs/apk/release/app-release.apk
