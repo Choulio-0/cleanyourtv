@@ -1711,15 +1711,12 @@ jobs:
                    '"wallpaper.jpg".equals(name) || "theme_revision".equals(name) || "intro.mp4".equals(name)', "theme files")
           write(tp, s)
 
-          # 2. the intro: a video, with its sound, played once at power-on; any key skips it, volume keys still work
-          write(jdir + "IntroActivity.java", """package com.gathin.tvhome;
+          # 2. the intro plays inside Home itself, on top of it: a separate activity was swept away by the second HOME
+          #    intent the firmware sends a few seconds after start-up (Home is singleTask), which cut it after half a second
+          write(jdir + "IntroOverlay.java", """package com.gathin.tvhome;
 
-          import android.app.Activity;
           import android.content.Context;
-          import android.os.Bundle;
           import android.view.Gravity;
-          import android.view.KeyEvent;
-          import android.view.View;
           import android.view.ViewGroup;
           import android.widget.FrameLayout;
           import android.widget.VideoView;
@@ -1727,11 +1724,17 @@ jobs:
           import java.io.File;
 
           /**
-           * The start-up intro: intro.mp4 from the theme folder, played once when the TV has just powered on (MainActivity
-           * starts it), with its sound. Any key skips it; the volume keys still change the volume.
+           * The start-up intro: intro.mp4 from the theme folder, with its sound, over Home. It lives inside Home's own window,
+           * so the HOME intents the firmware sends after power-on cannot close it. MainActivity ends it on any key (the volume
+           * keys still work), when the clip finishes, or when Home is left.
            */
-          public class IntroActivity extends Activity {
+          final class IntroOverlay {
               static final String FILE_NAME = "intro.mp4";
+
+              private final FrameLayout host;
+              private final FrameLayout layer;
+              private final VideoView video;
+              private boolean ended;
 
               /** The pushed clip, or null when there is none. */
               static File clip(Context ctx) {
@@ -1741,24 +1744,22 @@ jobs:
                   return file.isFile() && file.length() > 0 ? file : null;
               }
 
-              private boolean done;
+              /** Starts the intro on top of host; null when there is no clip. */
+              static IntroOverlay show(Context ctx, FrameLayout host) {
+                  File file = clip(ctx);
+                  return file == null ? null : new IntroOverlay(ctx, host, file);
+              }
 
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  File file = clip(this);
-                  if (file == null) {
-                      end();
-                      return;
-                  }
-                  FrameLayout root = new FrameLayout(this);
-                  root.setBackgroundColor(0xFF000000);
-                  VideoView video = new VideoView(this);
-                  root.addView(video, new FrameLayout.LayoutParams(
+              private IntroOverlay(Context ctx, FrameLayout host, File file) {
+                  this.host = host;
+                  layer = new FrameLayout(ctx);
+                  layer.setBackgroundColor(0xFF000000);
+                  layer.setClickable(true);
+                  video = new VideoView(ctx);
+                  layer.addView(video, new FrameLayout.LayoutParams(
                           ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
-                  setContentView(root);
-                  getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
-                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE);
+                  host.addView(layer, new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                   video.setOnCompletionListener(player -> end());
                   video.setOnErrorListener((player, what, extra) -> {
                       end();
@@ -1768,64 +1769,66 @@ jobs:
                   video.start();
               }
 
-              @Override
-              protected void onPause() {
-                  super.onPause();
-                  end();   // never left behind in the back stack
+              boolean showing() {
+                  return !ended;
               }
 
-              @Override
-              public boolean dispatchKeyEvent(KeyEvent event) {
-                  int key = event.getKeyCode();
-                  if (key == KeyEvent.KEYCODE_VOLUME_UP || key == KeyEvent.KEYCODE_VOLUME_DOWN
-                          || key == KeyEvent.KEYCODE_VOLUME_MUTE) {
-                      return super.dispatchKeyEvent(event);
+              void end() {
+                  if (ended) return;
+                  ended = true;
+                  try {
+                      video.stopPlayback();
+                  } catch (RuntimeException ignored) {
                   }
-                  if (event.getAction() == KeyEvent.ACTION_UP) end();
-                  return true;
-              }
-
-              private void end() {
-                  if (done) return;
-                  done = true;
-                  finish();
-                  overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                  layer.animate().alpha(0f).setDuration(300).withEndAction(() -> host.removeView(layer)).start();
               }
           }
           """)
-          mp = base + "AndroidManifest.xml"
-          s = read(mp)
-          s = once(s, "        <!-- The same clock, started by Home itself after home_idle_clock_minutes without input. -->\n",
-                   '''        <!-- The start-up intro (intro.mp4), started by Home once after the TV powers on. -->
-                  <activity
-                      android:name=".IntroActivity"
-                      android:exported="false"
-                      android:excludeFromRecents="true"
-                      android:noHistory="true"
-                      android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
-                  <!-- The same clock, started by Home itself after home_idle_clock_minutes without input. -->
-          ''', "manifest")
-          write(mp, s)
-
-          # 3. Home starts it, once per process, only just after power-on
+          # 3. Home starts it, once per process and only just after power-on; --ez intro true starts it on demand
           hp = jdir + "MainActivity.java"
           s = read(hp)
-          s = once(s, "    private View btnSaver;\n", "    private View btnSaver;\n    private static boolean introChecked;\n", "intro field")
-          s = once(s, "        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_main);\n",
-                   "        super.onCreate(savedInstanceState);\n"
+          s = once(s, "    private View btnSaver;\n",
+                   "    private View btnSaver;\n    private static boolean introChecked;\n    private IntroOverlay intro;\n", "intro fields")
+          s = once(s, "        root.setBackgroundColor(cfg.backgroundColor);\n",
+                   "        root.setBackgroundColor(cfg.backgroundColor);\n"
                    "        if (!introChecked) {\n"
                    "            introChecked = true;\n"
                    "            // Only when the TV has just powered on: a reinstall, a theme push or a crash restart is not a start-up.\n"
-                   "            if (savedInstanceState == null && SystemClock.elapsedRealtime() < 5 * 60_000L\n"
-                   "                    && IntroActivity.clip(this) != null) {\n"
-                   "                try {\n"
-                   "                    startActivity(new Intent(this, IntroActivity.class));\n"
-                   "                } catch (RuntimeException ignored) {\n"
-                   "                }\n"
-                   "            }\n"
+                   "            // Posted, so the intro is added after everything else and stays on top.\n"
+                   "            if (savedInstanceState == null && SystemClock.elapsedRealtime() < 5 * 60_000L) root.post(this::startIntro);\n"
+                   "        }\n", "intro start")
+          s = once(s, "    // ---- Wallpaper strip: pick a wallpaper with a live preview",
+                   '''    /** Plays intro.mp4 over Home (IntroOverlay); nothing when the theme has no clip. */
+              private void startIntro() {
+                  if (isFinishing() || isDestroyed()) return;
+                  if (intro != null) intro.end();
+                  intro = IntroOverlay.show(this, root);
+              }
+
+              // ---- Wallpaper strip: pick a wallpaper with a live preview''', "intro method")
+          s = once(s, "        // Vendor keys (TCL Netflix button, 4062) never reach the key services, only the focused window.\n",
+                   "        if (intro != null && intro.showing()) {\n"
+                   "            // Any key skips the intro; the volume keys still change the volume.\n"
+                   "            int key = event.getKeyCode();\n"
+                   "            if (key == KeyEvent.KEYCODE_VOLUME_UP || key == KeyEvent.KEYCODE_VOLUME_DOWN\n"
+                   "                    || key == KeyEvent.KEYCODE_VOLUME_MUTE) return super.dispatchKeyEvent(event);\n"
+                   "            if (event.getAction() == KeyEvent.ACTION_UP) intro.end();\n"
+                   "            return true;\n"
                    "        }\n"
-                   "        setContentView(R.layout.activity_main);\n", "intro start")
+                   "        // Vendor keys (TCL Netflix button, 4062) never reach the key services, only the focused window.\n", "intro keys")
+          s = once(s, "        super.onNewIntent(intent);\n        if (openLauncherSettingsIfAsked(intent)) return;",
+                   "        super.onNewIntent(intent);\n"
+                   "        // am start -n com.gathin.tvhome/.MainActivity --ez intro true: play the intro now, to try a clip.\n"
+                   "        if (intent != null && intent.getBooleanExtra(\"intro\", false)) {\n"
+                   "            startIntro();\n"
+                   "            return;\n"
+                   "        }\n"
+                   "        if (openLauncherSettingsIfAsked(intent)) return;", "intro new intent")
+          s = once(s, "        super.onStop();\n        started = false;\n",
+                   "        super.onStop();\n        if (intro != null) intro.end();\n        started = false;\n", "intro stop")
+          s = once(s, "        super.onDestroy();\n        if (gameDay != null) gameDay.shutdown();\n",
+                   "        super.onDestroy();\n        if (intro != null) intro.end();\n        if (gameDay != null) gameDay.shutdown();\n", "intro destroy")
           write(hp, s)
           print("intro patch applied")
           PY
@@ -1836,5 +1839,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-intro
+          name: launcher-apk-intro2
           path: launcher/app/build/outputs/apk/release/app-release.apk
