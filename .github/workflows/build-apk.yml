@@ -1724,14 +1724,14 @@ jobs:
           import java.io.File;
 
           /**
-           * The start-up intro: intro.mp4 from the theme folder, with its sound, over Home. It lives inside Home's own window,
+           * The start-up intro: intro.mp4 from the theme folder, with its sound, over Home. It lives inside Home's own window, above its whole layout,
            * so the HOME intents the firmware sends after power-on cannot close it. MainActivity ends it on any key (the volume
            * keys still work), when the clip finishes, or when Home is left.
            */
           final class IntroOverlay {
               static final String FILE_NAME = "intro.mp4";
 
-              private final FrameLayout host;
+              private final ViewGroup host;
               private final FrameLayout layer;
               private final VideoView video;
               private boolean ended;
@@ -1745,12 +1745,12 @@ jobs:
               }
 
               /** Starts the intro on top of host; null when there is no clip. */
-              static IntroOverlay show(Context ctx, FrameLayout host) {
+              static IntroOverlay show(Context ctx, ViewGroup host) {
                   File file = clip(ctx);
                   return file == null ? null : new IntroOverlay(ctx, host, file);
               }
 
-              private IntroOverlay(Context ctx, FrameLayout host, File file) {
+              private IntroOverlay(Context ctx, ViewGroup host, File file) {
                   this.host = host;
                   layer = new FrameLayout(ctx);
                   layer.setBackgroundColor(0xFF000000);
@@ -1795,15 +1795,15 @@ jobs:
                    "        if (!introChecked) {\n"
                    "            introChecked = true;\n"
                    "            // Only when the TV has just powered on: a reinstall, a theme push or a crash restart is not a start-up.\n"
-                   "            // Posted, so the intro is added after everything else and stays on top.\n"
-                   "            if (savedInstanceState == null && SystemClock.elapsedRealtime() < 5 * 60_000L) root.post(this::startIntro);\n"
+                   "            // Added to the window's content frame, above Home's whole layout and before its first frame: no flash of Home.\n"
+                   "            if (savedInstanceState == null && SystemClock.elapsedRealtime() < 5 * 60_000L) startIntro();\n"
                    "        }\n", "intro start")
           s = once(s, "    // ---- Wallpaper strip: pick a wallpaper with a live preview",
                    '''    /** Plays intro.mp4 over Home (IntroOverlay); nothing when the theme has no clip. */
               private void startIntro() {
                   if (isFinishing() || isDestroyed()) return;
                   if (intro != null) intro.end();
-                  intro = IntroOverlay.show(this, root);
+                  intro = IntroOverlay.show(this, (ViewGroup) root.getParent());
               }
 
               // ---- Wallpaper strip: pick a wallpaper with a live preview''', "intro method")
@@ -1839,5 +1839,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-intro2
+          name: launcher-apk-intro3
           path: launcher/app/build/outputs/apk/release/app-release.apk
