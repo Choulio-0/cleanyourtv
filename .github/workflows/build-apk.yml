@@ -1528,6 +1528,157 @@ jobs:
           write(mp, s)
           print("wallpaper strip patch applied")
           PY
+      - name: Screensaver slideshow, outline and pill
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # 1. the screensaver's clock and date get the same black outline as the other texts
+          dp = res + "layout/dream_clock.xml"
+          d = read(dp)
+          if d.count("<TextClock") != 3:
+              sys.exit("PATCH FAILED: dream clocks")
+          write(dp, d.replace("<TextClock", "<com.gathin.tvhome.OutlineTextClock"))
+
+          # 2. a slideshow: every picture of the theme fades into the next while the screensaver is up
+          cp = jdir + "ClockScene.java"
+          s = read(cp)
+          s = once(s, "import android.graphics.drawable.LayerDrawable;\n",
+                   "import android.graphics.drawable.LayerDrawable;\nimport android.graphics.drawable.TransitionDrawable;\n", "import")
+          s = once(s, "    private final Runnable tick = new Runnable() {",
+                   '''    /** The slideshow: every picture the theme has, one every SLIDE_MS with a fade; null for a single picture. */
+              private static final long SLIDE_MS = 30_000L;
+              private static final int FADE_MS = 1800;
+              private List<File> slides;
+              private int slideIndex;
+              private final Runnable slideTick = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (slides == null || slides.size() < 2) return;
+                      slideIndex = (slideIndex + 1) % slides.size();
+                      wallpaperFile = slides.get(slideIndex);
+                      wallpaperShown = false;
+                      loadWallpaper();
+                      handler.postDelayed(this, SLIDE_MS);
+                  }
+              };
+
+              private final Runnable tick = new Runnable() {''', "slide fields")
+          s = once(s, "        if (wallpaperFile != null && !wallpaperShown) loadWallpaper();\n    }\n",
+                   "        if (wallpaperFile != null && !wallpaperShown) loadWallpaper();\n"
+                   "        handler.removeCallbacks(slideTick);\n"
+                   "        if (slides != null && slides.size() > 1) handler.postDelayed(slideTick, SLIDE_MS);\n    }\n", "start")
+          s = once(s, "        wallpaperShade = (cfg.clockWallpaperDim * 255 / 100) << 24;\n",
+                   '''        // The whole collection plays, whatever single picture Home was set to: the theme's wallpaper.jpg
+                  // (unless the collection has the same picture) and everything in wallpapers/.
+                  File themeDir = Config.dir(ctx);
+                  if (themeDir != null) {
+                      List<File> all = new ArrayList<>(WallpaperRotation.images(new File(themeDir, "wallpapers")));
+                      File single = new File(themeDir, Config.WALLPAPER_NAME);
+                      if (single.isFile() && single.length() > 0) {
+                          boolean twin = false;
+                          for (File picture : all) if (picture.length() == single.length()) twin = true;
+                          if (!twin) all.add(0, single);
+                      }
+                      if (all.size() > 1) {
+                          slides = all;
+                          slideIndex = 0;
+                          for (int i = 0; i < all.size(); i++) {
+                              if (wallpaperFile != null && all.get(i).getName().equals(wallpaperFile.getName())) slideIndex = i;
+                          }
+                          wallpaperFile = all.get(slideIndex);
+                          rotation = null;   // the slideshow replaces Home's own rotation
+                      } else if (wallpaperFile == null && !all.isEmpty()) {
+                          wallpaperFile = all.get(0);
+                      }
+                  }
+                  wallpaperShade = (cfg.clockWallpaperDim * 255 / 100) << 24;
+          ''', "slides setup")
+          s = once(s, '''                ambient.setBackground(null);
+                          ambient.setImageDrawable(new LayerDrawable(new Drawable[]{
+                                  new BitmapDrawable(res, bmp), new ColorDrawable(shade)}));''',
+                   '''                ambient.setBackground(null);
+                          Drawable next = new LayerDrawable(new Drawable[]{
+                                  new BitmapDrawable(res, bmp), new ColorDrawable(shade)});
+                          Drawable previous = ambient.getDrawable();
+                          if (previous instanceof TransitionDrawable) previous = ((TransitionDrawable) previous).getDrawable(1);
+                          if (previous == null) {
+                              ambient.setImageDrawable(next);
+                          } else {
+                              TransitionDrawable fade = new TransitionDrawable(new Drawable[]{previous, next});
+                              ambient.setImageDrawable(fade);
+                              fade.startTransition(FADE_MS);
+                          }''', "crossfade")
+          write(cp, s)
+
+          # 3. a "screensaver" pill on Home, in front of the wallpaper pill
+          PHONE = ("M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 "
+                   "-0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4 "
+                   "-0.44,-0.06 -0.9,-0.1 -1.36,-0.1z")
+          write(res + "drawable/ic_saver.xml", "\n".join([
+              '<?xml version="1.0" encoding="utf-8"?>',
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+              '    android:width="22dp" android:height="22dp"',
+              '    android:viewportWidth="24" android:viewportHeight="24">',
+              '    <group android:scaleX="0.88" android:scaleY="0.88" android:pivotX="12" android:pivotY="12">',
+              '        <path android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="1.8"',
+              '            android:strokeLineJoin="round" android:strokeLineCap="round" android:pathData="%s" />' % PHONE,
+              '        <path android:fillColor="#FFFFFFFF" android:pathData="%s" />' % PHONE,
+              '    </group>',
+              '</vector>',
+              '',
+          ]))
+          lp = res + "layout/activity_main.xml"
+          m = read(lp)
+          m = once(m, '''                <TextView
+                              android:id="@+id/btnReorder"''',
+                   '''                <TextView
+                              android:id="@+id/btnSaver"
+                              style="@style/TopButtonIcon"
+                              android:contentDescription="@string/dream_name"
+                              android:drawableStart="@drawable/ic_saver"
+                              android:nextFocusDown="@+id/grid" />
+
+                          <TextView
+                              android:id="@+id/btnReorder"''', "saver pill layout")
+          write(lp, m)
+
+          mp = jdir + "MainActivity.java"
+          t = read(mp)
+          t = once(t, "    private View btnReorder;\n", "    private View btnReorder;\n    private View btnSaver;\n", "saver field")
+          t = once(t, "        btnReorder.setContentDescription(\"Fond d'ecran\");\n",
+                   "        btnReorder.setContentDescription(\"Fond d'ecran\");\n"
+                   "        btnSaver = findViewById(R.id.btnSaver);\n"
+                   "        btnSaver.setOnClickListener(v -> RemoteKeys.launch(this, \"screensaver\"));\n", "saver click")
+          t = once(t, "            int firstButton = R.id.btnReorder;", "            int firstButton = R.id.btnSaver;", "first button")
+          t = once(t, "        btnReorder.setOnKeyListener(pillKeys);\n",
+                   "        btnReorder.setOnKeyListener(pillKeys);\n        btnSaver.setOnKeyListener(pillKeys);\n", "saver keys")
+          t = once(t, "Arrays.asList(btnInputs, btnWifi, btnVpn, btnReorder, btnLibraryTop, btnSettings)",
+                   "Arrays.asList(btnInputs, btnWifi, btnVpn, btnSaver, btnReorder, btnLibraryTop, btnSettings)", "saver pills")
+          write(mp, t)
+          print("screensaver patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -1535,5 +1686,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-strip
+          name: launcher-apk-saver
           path: launcher/app/build/outputs/apk/release/app-release.apk
