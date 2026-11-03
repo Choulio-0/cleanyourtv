@@ -1832,7 +1832,7 @@ jobs:
           write(hp, s)
           print("intro patch applied")
           PY
-      - name: TV info pill and popup, moon pill moved
+      - name: TV info pill and popup, moon pill removed
         run: |
           python3 - <<'PY'
           import sys
@@ -2205,7 +2205,7 @@ jobs:
                    '    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />\n', "permission")
           write(mp, m)
 
-          # ---- 6. top bar: the info pill takes the moon's place, the moon moves in front of Settings
+          # ---- 6. top bar: the moon pill goes, the info pill sits between Wi-Fi and Settings
 
           lp = res + "layout/activity_main.xml"
           a = read(lp)
@@ -2224,10 +2224,10 @@ jobs:
                               android:nextFocusDown="@+id/grid" />
 
           """
-          a = once(a, SAVER, INFO, "saver block")
+          a = once(a, SAVER, "", "saver block")
           SETTINGS = """                <TextView
                               android:id="@+id/btnSettings\""""
-          a = once(a, SETTINGS, SAVER + SETTINGS, "settings block")
+          a = once(a, SETTINGS, INFO + SETTINGS, "settings block")
           write(lp, a)
 
           # ---- 7. MainActivity: the pill and its popup
@@ -2235,22 +2235,20 @@ jobs:
           hp = jdir + "MainActivity.java"
           s = read(hp)
           s = once(s, "    private View btnSaver;\n",
-                   "    private View btnSaver;\n"
                    "    private View btnInfo;\n"
                    "    private int infoFps = -1;\n"
                    "    private int infoSlow = -1;\n"
                    "    private View infoMeterRow;\n"
                    "    private ValueAnimator infoMeterAnim;\n", "fields")
-          s = once(s, "        btnSaver = findViewById(R.id.btnSaver);\n",
+          s = once(s, "        btnSaver = findViewById(R.id.btnSaver);\n"
+                   "        btnSaver.setOnClickListener(v -> RemoteKeys.launch(this, \"screensaver\"));\n",
                    "        btnInfo = findViewById(R.id.btnInfo);\n"
                    "        btnInfo.setContentDescription(wifiText(\"Cette TV\", \"This TV\"));\n"
-                   "        btnInfo.setOnClickListener(v -> showInfoPopup());\n"
-                   "        btnSaver = findViewById(R.id.btnSaver);\n", "find")
-          s = once(s, "int firstButton = R.id.btnSaver;", "int firstButton = R.id.btnInfo;", "first button")
-          s = once(s, "        btnSaver.setOnKeyListener(pillKeys);\n",
-                   "        btnSaver.setOnKeyListener(pillKeys);\n        btnInfo.setOnKeyListener(pillKeys);\n", "keys")
+                   "        btnInfo.setOnClickListener(v -> showInfoPopup());\n", "find")
+          s = once(s, "int firstButton = R.id.btnSaver;", "int firstButton = R.id.btnReorder;", "first button")
+          s = once(s, "        btnSaver.setOnKeyListener(pillKeys);\n", "        btnInfo.setOnKeyListener(pillKeys);\n", "keys")
           s = once(s, "Arrays.asList(btnInputs, btnWifi, btnVpn, btnSaver, btnReorder, btnLibraryTop, btnSettings)",
-                   "Arrays.asList(btnInfo, btnInputs, btnWifi, btnVpn, btnSaver, btnReorder, btnLibraryTop, btnSettings)", "pills")
+                   "Arrays.asList(btnInputs, btnWifi, btnVpn, btnInfo, btnReorder, btnLibraryTop, btnSettings)", "pills")
 
           BLOCK = r'''    // ---- "This TV" popup: storage, memory, how smoothly the interface runs ----------------------------------
 
@@ -2274,7 +2272,7 @@ jobs:
                       infoMeterAnim = null;
                       infoMeterRow = null;
                   });
-                  int alignment = getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.END : Gravity.START;
+                  int alignment = getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.START : Gravity.END;
                   dropIn(popup, panel, btnInfo, alignment);
                   rows.getChildAt(rows.getChildCount() - 1).requestFocus();
                   // Measured once the popup has settled, so its own opening does not count against the TV. The bar of the
@@ -2413,5 +2411,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-info
+          name: launcher-apk-info2
           path: launcher/app/build/outputs/apk/release/app-release.apk
