@@ -1832,6 +1832,580 @@ jobs:
           write(hp, s)
           print("intro patch applied")
           PY
+      - name: TV info pill and popup, moon pill moved
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # ---- 1. icons: a gauge for the pill (black outline + white fill like the other pills), a refresh arrow for the row
+
+          GAUGE = (r"M20.38,8.57l-1.23,1.85a8,8 0 0,1 -0.22,7.58H5.07A8,8 0 0,1 15.58,6.85l1.85,-1.23A10,10 0 0,0 3.35,19"
+                   r"a2,2 0 0,0 1.72,1h13.85a2,2 0 0,0 1.74,-1 10,10 0 0,0 -0.27,-10.44zM10.59,15.41a2,2 0 0,0 2.83,0"
+                   r"l5.66,-8.49 -8.49,5.66a2,2 0 0,0 0,2.83z")
+          write(res + "drawable/ic_info.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="22dp" android:height="22dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <group android:scaleX="0.88" android:scaleY="0.88" android:pivotX="12" android:pivotY="12">
+                  <path android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="1.8"
+                      android:strokeLineJoin="round" android:strokeLineCap="round" android:pathData="%s" />
+                  <path android:fillColor="#FFFFFFFF" android:pathData="%s" />
+              </group>
+          </vector>
+          """ % (GAUGE, GAUGE))
+
+          write(res + "drawable/ic_refresh_row.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M17.65,6.35C16.2,4.9 14.21,4 12,4c-4.42,0 -7.99,3.58 -7.99,8s3.57,8 7.99,8c3.73,0 6.84,-2.55 7.73,-6h-2.08c-0.82,2.33 -3.04,4 -5.65,4 -3.31,0 -6,-2.69 -6,-6s2.69,-6 6,-6c1.66,0 3.14,0.69 4.22,1.78L13,11h7V4l-2.35,2.35z" />
+          </vector>
+          """)
+
+          write(res + "drawable/stat_track.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#26FFFFFF" />
+              <corners android:radius="3dp" />
+          </shape>
+          """)
+
+          # ---- 2. layouts of the popup: a header (verdict, model) and a stat line (name, value, optional bar)
+
+          write(res + "layout/popup_info_header.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp"
+              android:paddingTop="10dp"
+              android:paddingBottom="6dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <TextView
+                      android:id="@+id/infoTitle"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:textColor="#FFFFFFFF"
+                      android:textSize="18sp"
+                      android:fontFamily="@string/font_medium"
+                      android:singleLine="true" />
+
+                  <View
+                      android:id="@+id/infoDot"
+                      android:layout_width="7dp"
+                      android:layout_height="7dp"
+                      android:layout_marginEnd="8dp"
+                      android:background="@drawable/status_dot" />
+
+                  <TextView
+                      android:id="@+id/infoVerdict"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:textColor="#99FFFFFF"
+                      android:textSize="11sp"
+                      android:fontFamily="@string/font_body"
+                      android:letterSpacing="0.04" />
+              </LinearLayout>
+
+              <TextView
+                  android:id="@+id/infoModel"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="4dp"
+                  android:textColor="#A6FFFFFF"
+                  android:textSize="12sp"
+                  android:fontFamily="@string/font_body" />
+          </LinearLayout>
+          """)
+
+          write(res + "layout/item_stat.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:paddingStart="12dp"
+              android:paddingEnd="12dp"
+              android:paddingTop="7dp"
+              android:paddingBottom="7dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <TextView
+                      android:id="@+id/statName"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:layout_marginEnd="12dp"
+                      android:textColor="#FFFFFFFF"
+                      android:textSize="14sp"
+                      android:fontFamily="@string/font_medium"
+                      android:singleLine="true" />
+
+                  <TextView
+                      android:id="@+id/statValue"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:textColor="#B3FFFFFF"
+                      android:textSize="13sp"
+                      android:fontFamily="@string/font_body"
+                      android:singleLine="true" />
+              </LinearLayout>
+
+              <LinearLayout
+                  android:id="@+id/statTrack"
+                  android:layout_width="match_parent"
+                  android:layout_height="6dp"
+                  android:layout_marginTop="6dp"
+                  android:orientation="horizontal"
+                  android:background="@drawable/stat_track">
+
+                  <View
+                      android:id="@+id/statFill"
+                      android:layout_width="0dp"
+                      android:layout_height="match_parent"
+                      android:layout_weight="0" />
+
+                  <View
+                      android:id="@+id/statRest"
+                      android:layout_width="0dp"
+                      android:layout_height="match_parent"
+                      android:layout_weight="100" />
+              </LinearLayout>
+          </LinearLayout>
+          """)
+
+          # ---- 3. what the popup reads: storage, memory, load, temperature, uptime; and the "free up memory" action
+
+          write(jdir + "SystemStats.java", r"""package com.gathin.tvhome;
+
+          import android.app.ActivityManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
+          import android.os.Environment;
+          import android.os.StatFs;
+          import android.os.SystemClock;
+
+          import java.io.BufferedReader;
+          import java.io.FileReader;
+          import java.util.HashSet;
+          import java.util.Locale;
+          import java.util.Set;
+
+          /** A snapshot of how the TV is doing, for the "This TV" popup. A reading that fails leaves its field empty. */
+          final class SystemStats {
+              static final int OK = 0, LOW_MEMORY = 1, LOW_STORAGE = 2, SLOW = 3;
+
+              long storageTotal, storageFree;
+              long ramTotal, ramAvail;
+              boolean lowMemory;
+              long uptimeMs;
+              float load = -1f;
+              int cores = Runtime.getRuntime().availableProcessors();
+              int tempC = -1;
+
+              static SystemStats read(Context ctx) {
+                  SystemStats s = new SystemStats();
+                  try {
+                      StatFs fs = new StatFs(Environment.getDataDirectory().getPath());
+                      s.storageTotal = fs.getTotalBytes();
+                      s.storageFree = fs.getAvailableBytes();
+                  } catch (RuntimeException ignored) {
+                  }
+                  try {
+                      ActivityManager am = ctx.getSystemService(ActivityManager.class);
+                      ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+                      am.getMemoryInfo(info);
+                      s.ramTotal = info.totalMem;
+                      s.ramAvail = info.availMem;
+                      s.lowMemory = info.lowMemory;
+                  } catch (RuntimeException ignored) {
+                  }
+                  s.uptimeMs = SystemClock.elapsedRealtime();
+                  String loadLine = firstLine("/proc/loadavg");
+                  if (loadLine != null) {
+                      try {
+                          s.load = Float.parseFloat(loadLine.trim().split("\\s+")[0]);
+                      } catch (RuntimeException ignored) {
+                      }
+                  }
+                  for (int zone = 0; zone < 8 && s.tempC < 0; zone++) {
+                      String text = firstLine("/sys/class/thermal/thermal_zone" + zone + "/temp");
+                      if (text == null) continue;
+                      try {
+                          int value = Integer.parseInt(text.trim());
+                          if (value > 1000) value /= 1000;
+                          if (value >= 10 && value <= 120) s.tempC = value;
+                      } catch (NumberFormatException ignored) {
+                      }
+                  }
+                  return s;
+              }
+
+              private static String firstLine(String path) {
+                  try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+                      return reader.readLine();
+                  } catch (Exception e) {
+                      return null;
+                  }
+              }
+
+              int storageUsedPercent() {
+                  return storageTotal <= 0 ? -1 : (int) Math.round(100.0 * (storageTotal - storageFree) / storageTotal);
+              }
+
+              int ramUsedPercent() {
+                  return ramTotal <= 0 ? -1 : (int) Math.round(100.0 * (ramTotal - ramAvail) / ramTotal);
+              }
+
+              /** What to tell first: the worst thing found. slowPercent is the share of slow frames, or -1 when not measured. */
+              int verdict(int slowPercent) {
+                  if (lowMemory || (ramTotal > 0 && ramAvail * 100 < ramTotal * 10)) return LOW_MEMORY;
+                  if (storageTotal > 0 && storageFree * 100 < storageTotal * 8) return LOW_STORAGE;
+                  if (slowPercent > 20) return SLOW;
+                  return OK;
+              }
+
+              /** 0 good, 1 careful, 2 bad: which colour a bar gets. */
+              static int level(int usedPercent, int warnAt, int badAt) {
+                  if (usedPercent < 0) return 0;
+                  return usedPercent >= badAt ? 2 : usedPercent >= warnAt ? 1 : 0;
+              }
+
+              static String size(long bytes, boolean french) {
+                  double mb = bytes / (1024.0 * 1024.0);
+                  String mo = french ? "Mo" : "MB";
+                  String go = french ? "Go" : "GB";
+                  if (mb >= 1024) return String.format(Locale.getDefault(), "%.1f %s", mb / 1024.0, go);
+                  return String.format(Locale.getDefault(), "%d %s", Math.round(mb), mo);
+              }
+
+              static String duration(long ms, boolean french) {
+                  long minutes = ms / 60_000L;
+                  long days = minutes / (24 * 60);
+                  long hours = (minutes / 60) % 24;
+                  long mins = minutes % 60;
+                  if (days > 0) return days + (french ? " j " : " d ") + hours + " h";
+                  if (hours > 0) return hours + " h " + mins + " min";
+                  return mins + " min";
+              }
+
+              /** Asks Android to end the apps running in the background, except this one. Whatever is playing keeps playing. */
+              static void freeBackground(Context ctx) {
+                  try {
+                      PackageManager pm = ctx.getPackageManager();
+                      ActivityManager am = ctx.getSystemService(ActivityManager.class);
+                      Set<String> packages = new HashSet<>();
+                      for (String category : new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
+                          Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(category);
+                          for (ResolveInfo info : pm.queryIntentActivities(intent, 0)) {
+                              if (info.activityInfo != null) packages.add(info.activityInfo.packageName);
+                          }
+                      }
+                      packages.remove(ctx.getPackageName());
+                      for (String pkg : packages) am.killBackgroundProcesses(pkg);
+                  } catch (RuntimeException ignored) {
+                  }
+              }
+          }
+          """)
+
+          # ---- 4. how smoothly the interface runs: frame cadence over 1.5 s while the popup is open
+
+          write(jdir + "FrameMeter.java", r"""package com.gathin.tvhome;
+
+          import android.view.Choreographer;
+
+          /** Counts frames for a short while and reports the rate and the share of slow ones (more than 24 ms apart). */
+          final class FrameMeter implements Choreographer.FrameCallback {
+              interface Listener {
+                  void onResult(int fps, int slowPercent);
+              }
+
+              private final long windowMs;
+              private final Listener listener;
+              private boolean cancelled, started;
+              private long first, last;
+              private int frames, slow;
+
+              FrameMeter(long windowMs, Listener listener) {
+                  this.windowMs = windowMs;
+                  this.listener = listener;
+              }
+
+              void start() {
+                  if (cancelled || started) return;
+                  started = true;
+                  Choreographer.getInstance().postFrameCallback(this);
+              }
+
+              void cancel() {
+                  cancelled = true;
+              }
+
+              @Override
+              public void doFrame(long frameTimeNanos) {
+                  if (cancelled) return;
+                  if (first == 0) first = frameTimeNanos;
+                  if (last != 0) {
+                      frames++;
+                      if ((frameTimeNanos - last) / 1_000_000.0 > 24.0) slow++;
+                  }
+                  last = frameTimeNanos;
+                  double elapsedMs = (frameTimeNanos - first) / 1_000_000.0;
+                  if (elapsedMs < windowMs) {
+                      Choreographer.getInstance().postFrameCallback(this);
+                      return;
+                  }
+                  if (frames > 0) listener.onResult((int) Math.round(frames * 1000.0 / elapsedMs), slow * 100 / frames);
+              }
+          }
+          """)
+
+          # ---- 5. permission to end background apps (normal protection level: granted at install)
+
+          mp = base + "AndroidManifest.xml"
+          m = read(mp)
+          m = once(m, '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n',
+                   '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
+                   '    <!-- The "This TV" popup\'s "Free up memory": ends background apps, never what is playing. Normal permission, granted at install. -->\n'
+                   '    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />\n', "permission")
+          write(mp, m)
+
+          # ---- 6. top bar: the info pill takes the moon's place, the moon moves in front of Settings
+
+          lp = res + "layout/activity_main.xml"
+          a = read(lp)
+          SAVER = """                <TextView
+                              android:id="@+id/btnSaver"
+                              style="@style/TopButtonIcon"
+                              android:contentDescription="@string/dream_name"
+                              android:drawableStart="@drawable/ic_saver"
+                              android:nextFocusDown="@+id/grid" />
+
+          """
+          INFO = """                <TextView
+                              android:id="@+id/btnInfo"
+                              style="@style/TopButtonIcon"
+                              android:drawableStart="@drawable/ic_info"
+                              android:nextFocusDown="@+id/grid" />
+
+          """
+          a = once(a, SAVER, INFO, "saver block")
+          SETTINGS = """                <TextView
+                              android:id="@+id/btnSettings\""""
+          a = once(a, SETTINGS, SAVER + SETTINGS, "settings block")
+          write(lp, a)
+
+          # ---- 7. MainActivity: the pill and its popup
+
+          hp = jdir + "MainActivity.java"
+          s = read(hp)
+          s = once(s, "    private View btnSaver;\n",
+                   "    private View btnSaver;\n"
+                   "    private View btnInfo;\n"
+                   "    private int infoFps = -1;\n"
+                   "    private int infoSlow = -1;\n"
+                   "    private View infoMeterRow;\n"
+                   "    private ValueAnimator infoMeterAnim;\n", "fields")
+          s = once(s, "        btnSaver = findViewById(R.id.btnSaver);\n",
+                   "        btnInfo = findViewById(R.id.btnInfo);\n"
+                   "        btnInfo.setContentDescription(wifiText(\"Cette TV\", \"This TV\"));\n"
+                   "        btnInfo.setOnClickListener(v -> showInfoPopup());\n"
+                   "        btnSaver = findViewById(R.id.btnSaver);\n", "find")
+          s = once(s, "int firstButton = R.id.btnSaver;", "int firstButton = R.id.btnInfo;", "first button")
+          s = once(s, "        btnSaver.setOnKeyListener(pillKeys);\n",
+                   "        btnSaver.setOnKeyListener(pillKeys);\n        btnInfo.setOnKeyListener(pillKeys);\n", "keys")
+          s = once(s, "Arrays.asList(btnInputs, btnWifi, btnVpn, btnSaver, btnReorder, btnLibraryTop, btnSettings)",
+                   "Arrays.asList(btnInfo, btnInputs, btnWifi, btnVpn, btnSaver, btnReorder, btnLibraryTop, btnSettings)", "pills")
+
+          BLOCK = r'''    // ---- "This TV" popup: storage, memory, how smoothly the interface runs ----------------------------------
+
+              private void showInfoPopup() {
+                  View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+                  final LinearLayout rows = panel.findViewById(R.id.rows);
+                  final PopupWindow popup = glassPopup(panel, (int) (360 * density));
+                  infoFps = -1;
+                  infoSlow = -1;
+                  infoMeterRow = null;
+                  fillInfoRows(rows, popup);
+                  final FrameMeter meter = new FrameMeter(1500, (fps, slow) -> {
+                      infoFps = fps;
+                      infoSlow = slow;
+                      if (popup.isShowing()) fillInfoRows(rows, popup);
+                  });
+                  popup.setOnDismissListener(() -> {
+                      if (openPopup == popup) openPopup = null;
+                      meter.cancel();
+                      if (infoMeterAnim != null) infoMeterAnim.cancel();
+                      infoMeterAnim = null;
+                      infoMeterRow = null;
+                  });
+                  int alignment = getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.END : Gravity.START;
+                  dropIn(popup, panel, btnInfo, alignment);
+                  rows.getChildAt(rows.getChildCount() - 1).requestFocus();
+                  // Measured once the popup has settled, so its own opening does not count against the TV. The bar of the
+                  // "Interface" row fills for the length of the measure: that moving bar is the work being timed.
+                  root.postDelayed(() -> {
+                      if (!popup.isShowing()) return;
+                      meter.start();
+                      final View row = infoMeterRow;
+                      if (row == null) return;
+                      final View fill = row.findViewById(R.id.statFill);
+                      final View rest = row.findViewById(R.id.statRest);
+                      infoMeterAnim = ValueAnimator.ofInt(2, 100);
+                      infoMeterAnim.setDuration(1500);
+                      infoMeterAnim.addUpdateListener(animation -> {
+                          int shown = (Integer) animation.getAnimatedValue();
+                          ((LinearLayout.LayoutParams) fill.getLayoutParams()).weight = shown;
+                          ((LinearLayout.LayoutParams) rest.getLayoutParams()).weight = 100 - shown;
+                          fill.requestLayout();
+                      });
+                      infoMeterAnim.start();
+                  }, 600);
+              }
+
+              /** (Re)builds the popup's rows from a fresh reading; the "free up memory" row stays last and focused. */
+              private void fillInfoRows(LinearLayout rows, PopupWindow popup) {
+                  rows.removeAllViews();
+                  infoMeterRow = null;
+                  final boolean fr = "fr".equals(Locale.getDefault().getLanguage());
+                  final SystemStats s = SystemStats.read(this);
+                  final int green = 0xFF34C759, orange = 0xFFFF9F0A, red = 0xFFFF453A;
+                  final int[] palette = {green, orange, red};
+
+                  View head = getLayoutInflater().inflate(R.layout.popup_info_header, rows, false);
+                  ((TextView) head.findViewById(R.id.infoTitle)).setText(wifiText("Cette TV", "This TV"));
+                  int verdict = s.verdict(infoSlow);
+                  String say;
+                  switch (verdict) {
+                      case SystemStats.LOW_MEMORY: say = wifiText("Mémoire presque pleine", "Memory almost full"); break;
+                      case SystemStats.LOW_STORAGE: say = wifiText("Stockage presque plein", "Storage almost full"); break;
+                      case SystemStats.SLOW: say = wifiText("Interface lente", "Interface slow"); break;
+                      default: say = wifiText("Tout va bien", "All good"); break;
+                  }
+                  ((TextView) head.findViewById(R.id.infoVerdict)).setText(say);
+                  head.findViewById(R.id.infoDot).setBackgroundTintList(ColorStateList.valueOf(verdict == SystemStats.OK ? green : orange));
+                  ((TextView) head.findViewById(R.id.infoModel)).setText(Build.MODEL + "  ·  Android " + Build.VERSION.RELEASE);
+                  rows.addView(head);
+                  addSeparator(rows);
+
+                  int storagePct = s.storageUsedPercent();
+                  if (storagePct >= 0) {
+                      addStatRow(rows, wifiText("Stockage", "Storage"),
+                              SystemStats.size(s.storageFree, fr) + wifiText(" libres sur ", " free of ") + SystemStats.size(s.storageTotal, fr),
+                              storagePct, palette[SystemStats.level(storagePct, 80, 92)]);
+                  }
+                  int ramPct = s.ramUsedPercent();
+                  if (ramPct >= 0) {
+                      addStatRow(rows, wifiText("Mémoire", "Memory"),
+                              SystemStats.size(s.ramAvail, fr) + wifiText(" libres sur ", " free of ") + SystemStats.size(s.ramTotal, fr),
+                              ramPct, palette[SystemStats.level(ramPct, 80, 90)]);
+                  }
+                  if (infoFps >= 0) {
+                      String feel = infoSlow <= 5 ? wifiText("Fluide", "Smooth")
+                              : infoSlow <= 15 ? wifiText("Correct", "Fair") : wifiText("Saccadé", "Choppy");
+                      addStatRow(rows, wifiText("Interface", "Interface"), infoFps + " fps  ·  " + feel,
+                              Math.min(100, infoFps * 100 / 60), infoSlow <= 5 ? green : infoSlow <= 15 ? orange : red);
+                  } else {
+                      infoMeterRow = addStatRow(rows, wifiText("Interface", "Interface"),
+                              wifiText("Mesure en cours…", "Measuring…"), 2, 0x99FFFFFF);
+                  }
+                  StringBuilder cpu = new StringBuilder();
+                  if (s.load >= 0) {
+                      cpu.append(wifiText("charge ", "load ")).append(String.format(Locale.getDefault(), "%.1f", s.load))
+                              .append(" / ").append(s.cores).append(wifiText(" cœurs", " cores"));
+                  } else {
+                      cpu.append(s.cores).append(wifiText(" cœurs", " cores"));
+                  }
+                  if (s.tempC > 0) cpu.append("  ·  ").append(s.tempC).append(" °C");
+                  addStatRow(rows, wifiText("Processeur", "Processor"), cpu.toString(), -1, 0);
+                  addStatRow(rows, wifiText("Allumée depuis", "Up for"), SystemStats.duration(s.uptimeMs, fr), -1, 0);
+                  addSeparator(rows);
+
+                  View action = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+                  ((ImageView) action.findViewById(R.id.icon)).setImageResource(R.drawable.ic_refresh_row);
+                  ((TextView) action.findViewById(R.id.title)).setText(wifiText("Libérer la mémoire", "Free up memory"));
+                  action.findViewById(R.id.status).setVisibility(View.GONE);
+                  action.findViewById(R.id.dot).setVisibility(View.GONE);
+                  final long before = s.ramAvail;
+                  action.setOnClickListener(v -> {
+                      SystemStats.freeBackground(this);
+                      root.postDelayed(() -> {
+                          if (!popup.isShowing()) return;
+                          long freed = SystemStats.read(this).ramAvail - before;
+                          Toast.makeText(this, freed > 1024 * 1024
+                                  ? wifiText("Mémoire libérée : ", "Freed: ") + SystemStats.size(freed, fr)
+                                  : wifiText("Rien de plus à libérer", "Nothing more to free"), Toast.LENGTH_SHORT).show();
+                          fillInfoRows(rows, popup);
+                      }, 1200);
+                  });
+                  rows.addView(action);
+                  if (popup.isShowing()) action.requestFocus();
+              }
+
+              /** One line of the info popup: a name, its value, and a bar of that percent unless percent is -1. */
+              private View addStatRow(LinearLayout rows, String name, String value, int percent, int color) {
+                  View row = getLayoutInflater().inflate(R.layout.item_stat, rows, false);
+                  ((TextView) row.findViewById(R.id.statName)).setText(name);
+                  ((TextView) row.findViewById(R.id.statValue)).setText(value);
+                  View track = row.findViewById(R.id.statTrack);
+                  if (percent < 0) {
+                      track.setVisibility(View.GONE);
+                  } else {
+                      int shown = Math.max(2, Math.min(100, percent));
+                      View fill = row.findViewById(R.id.statFill);
+                      View rest = row.findViewById(R.id.statRest);
+                      ((LinearLayout.LayoutParams) fill.getLayoutParams()).weight = shown;
+                      ((LinearLayout.LayoutParams) rest.getLayoutParams()).weight = 100 - shown;
+                      GradientDrawable bar = new GradientDrawable();
+                      bar.setColor(color);
+                      bar.setCornerRadius(3 * density);
+                      fill.setBackground(bar);
+                  }
+                  rows.addView(row);
+                  return row;
+              }
+
+          '''
+          s = once(s, "    // ---- Wallpaper strip: pick a wallpaper with a live preview",
+                   BLOCK + "    // ---- Wallpaper strip: pick a wallpaper with a live preview", "block")
+          write(hp, s)
+          print("info patch applied")
+          PY
       - name: Build release APK
         working-directory: launcher
         run: |
@@ -1839,5 +2413,5 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-intro3
+          name: launcher-apk-info
           path: launcher/app/build/outputs/apk/release/app-release.apk
