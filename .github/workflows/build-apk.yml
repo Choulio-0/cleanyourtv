@@ -1,4 +1,4 @@
-name: Build launcher AP
+name: Build launcher APK
 on:
   workflow_dispatch:
 permissions:
