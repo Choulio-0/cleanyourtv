@@ -2350,6 +2350,321 @@ jobs:
           write(hp, s)
           print("info patch applied")
           PY
+      - name: Now playing on Home
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          base = "launcher/app/src/main/"
+          res = base + "res/"
+          jdir = base + "java/com/gathin/tvhome/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # ---- 1. A listener service whose only job is to let the launcher read the active media sessions (Spotify, YouTube...).
+          #         Android hands session access to an enabled notification listener; this one reads no notification.
+          write(jdir + "MediaListener.java", r"""package com.gathin.tvhome;
+
+          import android.service.notification.NotificationListenerService;
+
+          /**
+           * Never reads a notification. It exists so the launcher may ask the system for the active media sessions
+           * (NowPlaying); the owner turns it on once: cmd notification allow_listener com.gathin.tvhome/.MediaListener
+           */
+          public class MediaListener extends NotificationListenerService {
+          }
+          """)
+
+          # ---- 2. What is playing: title, artist, playing or paused, and a play/pause toggle
+          write(jdir + "NowPlaying.java", r"""package com.gathin.tvhome;
+
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.media.MediaMetadata;
+          import android.media.session.MediaController;
+          import android.media.session.MediaSessionManager;
+          import android.media.session.PlaybackState;
+          import android.os.Handler;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          /** The media playing on the TV right now, read from the active media sessions while Home is on screen. */
+          final class NowPlaying {
+              interface Listener {
+                  void onChanged();
+              }
+
+              private final Context ctx;
+              private final Handler main;
+              private final Listener listener;
+              private final List<MediaController> controllers = new ArrayList<>();
+              private MediaSessionManager manager;
+              private ComponentName component;
+              private MediaController current;
+              private boolean running;
+
+              String title = "";
+              String artist = "";
+              boolean playing;
+
+              private final MediaSessionManager.OnActiveSessionsChangedListener sessions = this::rebuild;
+              private final MediaController.Callback callback = new MediaController.Callback() {
+                  @Override
+                  public void onPlaybackStateChanged(PlaybackState state) {
+                      pick();
+                  }
+
+                  @Override
+                  public void onMetadataChanged(MediaMetadata metadata) {
+                      pick();
+                  }
+              };
+
+              NowPlaying(Context ctx, Handler main, Listener listener) {
+                  this.ctx = ctx;
+                  this.main = main;
+                  this.listener = listener;
+              }
+
+              /** Starts listening; quietly does nothing until the owner has allowed MediaListener. */
+              void start() {
+                  if (running) return;
+                  try {
+                      manager = ctx.getSystemService(MediaSessionManager.class);
+                      component = new ComponentName(ctx, MediaListener.class);
+                      manager.addOnActiveSessionsChangedListener(sessions, component, main);
+                      running = true;
+                      rebuild(manager.getActiveSessions(component));
+                  } catch (RuntimeException e) {
+                      running = false;
+                      clear();
+                  }
+              }
+
+              void stop() {
+                  if (!running) return;
+                  running = false;
+                  try {
+                      manager.removeOnActiveSessionsChangedListener(sessions);
+                  } catch (RuntimeException ignored) {
+                  }
+                  for (MediaController c : controllers) c.unregisterCallback(callback);
+                  controllers.clear();
+                  current = null;
+                  clear();
+              }
+
+              /** Pauses what plays, or plays what is paused. */
+              void toggle() {
+                  MediaController c = current;
+                  if (c == null) return;
+                  try {
+                      if (playing) c.getTransportControls().pause();
+                      else c.getTransportControls().play();
+                  } catch (RuntimeException ignored) {
+                  }
+              }
+
+              boolean has() {
+                  return !title.isEmpty();
+              }
+
+              /** "Title  ·  Artist", or just the title. */
+              String line() {
+                  return artist.isEmpty() ? title : title + "  ·  " + artist;
+              }
+
+              private void rebuild(List<MediaController> list) {
+                  for (MediaController c : controllers) c.unregisterCallback(callback);
+                  controllers.clear();
+                  if (list != null) {
+                      for (MediaController c : list) {
+                          controllers.add(c);
+                          c.registerCallback(callback, main);
+                      }
+                  }
+                  pick();
+              }
+
+              private void pick() {
+                  MediaController best = null;
+                  for (MediaController c : controllers) {
+                      PlaybackState st = c.getPlaybackState();
+                      if (st == null) continue;
+                      if (st.getState() == PlaybackState.STATE_PLAYING) {
+                          best = c;
+                          break;
+                      }
+                      if (best == null && st.getState() == PlaybackState.STATE_PAUSED && text(c, MediaMetadata.METADATA_KEY_TITLE).length() > 0) {
+                          best = c;
+                      }
+                  }
+                  String newTitle = "", newArtist = "";
+                  boolean nowPlaying = false;
+                  if (best != null) {
+                      newTitle = text(best, MediaMetadata.METADATA_KEY_TITLE);
+                      newArtist = text(best, MediaMetadata.METADATA_KEY_ARTIST);
+                      if (newArtist.isEmpty()) newArtist = text(best, MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
+                      PlaybackState st = best.getPlaybackState();
+                      nowPlaying = st != null && st.getState() == PlaybackState.STATE_PLAYING;
+                  }
+                  current = best;
+                  if (newTitle.equals(title) && newArtist.equals(artist) && nowPlaying == playing) return;
+                  title = newTitle;
+                  artist = newArtist;
+                  playing = nowPlaying;
+                  listener.onChanged();
+              }
+
+              private void clear() {
+                  boolean changed = has() || playing;
+                  title = "";
+                  artist = "";
+                  playing = false;
+                  if (changed) listener.onChanged();
+              }
+
+              private static String text(MediaController c, String key) {
+                  try {
+                      MediaMetadata m = c.getMetadata();
+                      CharSequence s = m == null ? null : m.getText(key);
+                      return s == null ? "" : s.toString().trim();
+                  } catch (RuntimeException e) {
+                      return "";
+                  }
+              }
+          }
+          """)
+
+          write(res + "drawable/ic_music_row.xml", """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="20dp" android:height="20dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z" />
+          </vector>
+          """)
+
+          # ---- 3. Manifest: the listener service
+          mp = base + "AndroidManifest.xml"
+          m = read(mp)
+          m = once(m, "        <service\n            android:name=\".ClockDream\"",
+                   "        <!-- Lets Home read what is playing (NowPlaying). Turned on once with:\n"
+                   "             cmd notification allow_listener com.gathin.tvhome/.MediaListener -->\n"
+                   "        <service\n"
+                   "            android:name=\".MediaListener\"\n"
+                   "            android:exported=\"true\"\n"
+                   "            android:label=\"@string/app_name\"\n"
+                   "            android:permission=\"android.permission.BIND_NOTIFICATION_LISTENER_SERVICE\">\n"
+                   "            <intent-filter>\n"
+                   "                <action android:name=\"android.service.notification.NotificationListenerService\" />\n"
+                   "            </intent-filter>\n"
+                   "        </service>\n\n"
+                   "        <service\n            android:name=\".ClockDream\"", "manifest service")
+          write(mp, m)
+
+          # ---- 4. Home: a line under the date, only while something plays
+          lp = res + "layout/activity_main.xml"
+          a = read(lp)
+          a = once(a, """            <LinearLayout
+                          android:id="@+id/topButtons\"""", """            <com.gathin.tvhome.OutlineTextView
+                          android:id="@+id/nowPlaying"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:layout_below="@id/leftBlock"
+                          android:layout_alignStart="@id/leftBlock"
+                          android:layout_marginTop="2dp"
+                          android:layout_marginStart="4dp"
+                          android:gravity="left"
+                          android:maxWidth="420dp"
+                          android:singleLine="true"
+                          android:ellipsize="end"
+                          android:textColor="#E6FFFFFF"
+                          android:textSize="14sp"
+                          android:fontFamily="@string/font_medium"
+                          android:letterSpacing="0.03"
+                          android:focusable="false"
+                          android:visibility="gone" />
+
+                      <LinearLayout
+                          android:id="@+id/topButtons\"""", "now playing view")
+          write(lp, a)
+
+          # ---- 5. MainActivity
+          hp = jdir + "MainActivity.java"
+          s = read(hp)
+          s = once(s, "    private View btnInfo;\n",
+                   "    private View btnInfo;\n    private NowPlaying nowPlaying;\n    private TextView nowLine;\n", "fields")
+          s = once(s, "    protected void onStart() {\n        super.onStart();\n",
+                   "    protected void onStart() {\n        super.onStart();\n"
+                   "        if (nowPlaying == null) {\n"
+                   "            nowLine = findViewById(R.id.nowPlaying);\n"
+                   "            nowPlaying = new NowPlaying(this, handler, this::showNowPlaying);\n"
+                   "        }\n"
+                   "        nowPlaying.start();\n", "start")
+          s = once(s, "        super.onStop();\n        if (intro != null) intro.end();\n",
+                   "        super.onStop();\n        if (nowPlaying != null) nowPlaying.stop();\n        if (intro != null) intro.end();\n", "stop")
+
+          # the "Now playing" row of the info popup, and the line on Home
+          s = once(s, """        addSeparator(rows);
+
+                  View action = getLayoutInflater().inflate(R.layout.item_input, rows, false);""",
+                   """        addSeparator(rows);
+
+                  if (nowPlaying != null && nowPlaying.has()) {
+                      View song = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+                      ((ImageView) song.findViewById(R.id.icon)).setImageResource(R.drawable.ic_music_row);
+                      TextView songTitle = song.findViewById(R.id.title);
+                      songTitle.setText(nowPlaying.line());
+                      songTitle.setEllipsize(TextUtils.TruncateAt.END);
+                      ((TextView) song.findViewById(R.id.status)).setText(nowPlaying.playing ? "Pause" : wifiText("Lecture", "Play"));
+                      song.findViewById(R.id.dot).setVisibility(View.GONE);
+                      song.setOnClickListener(v -> {
+                          nowPlaying.toggle();
+                          root.postDelayed(() -> {
+                              if (popup.isShowing()) fillInfoRows(rows, popup);
+                          }, 600);
+                      });
+                      rows.addView(song);
+                  }
+
+                  View action = getLayoutInflater().inflate(R.layout.item_input, rows, false);""", "song row")
+
+          s = once(s, "    /** One line of the info popup: a name, its value, and a bar of that percent unless percent is -1. */",
+                   """    /** The line under the date: what plays now, shown only while something is playing. */
+              private void showNowPlaying() {
+                  if (nowLine == null || nowPlaying == null) return;
+                  if (nowPlaying.playing && nowPlaying.has()) {
+                      nowLine.setText("\\u266A  " + nowPlaying.line());
+                      View stats = findViewById(R.id.stats);
+                      RelativeLayout.LayoutParams lp = (RelativeLayout.LayoutParams) nowLine.getLayoutParams();
+                      lp.topMargin = Math.round((stats != null && stats.getVisibility() == View.VISIBLE ? 26 : 2) * density);
+                      nowLine.setLayoutParams(lp);
+                      nowLine.setVisibility(View.VISIBLE);
+                  } else {
+                      nowLine.setVisibility(View.GONE);
+                  }
+              }
+
+              /** One line of the info popup: a name, its value, and a bar of that percent unless percent is -1. */""", "show now playing")
+          write(hp, s)
+          print("now playing patch applied")
+          PY
       - name: Leaner build, French and English only
         run: |
           python3 - <<'PY'
@@ -2394,12 +2709,52 @@ jobs:
           write(mp, m)
           print("lean patch applied")
           PY
+      - name: Fixed signing key
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          # Every runner makes a new random debug key, so each build had another signature and Android refused to
+          # update the installed launcher in place. With the secret DEBUG_KEYSTORE_B64 the same key signs every build.
+          if [ -n "$KS" ]; then
+            mkdir -p ~/.android
+            echo "$KS" | base64 -d > ~/.android/debug.keystore
+            keytool -list -keystore ~/.android/debug.keystore -storepass android | tail -n 2
+          else
+            echo "::warning::No DEBUG_KEYSTORE_B64 secret: this build gets a random key (installs will not update in place)"
+          fi
       - name: Build release APK
         working-directory: launcher
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
+      - name: Module Headphones
+        continue-on-error: true
+        working-directory: addons/headphones
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -q assembleRelease
+      - name: Module Remote Access
+        continue-on-error: true
+        working-directory: addons/remote-access
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -q assembleRelease
+      - name: Module Weather
+        continue-on-error: true
+        working-directory: addons/weather
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -q assembleRelease
+      - name: Collect the pack
+        run: |
+          mkdir -p out
+          cp launcher/app/build/outputs/apk/release/app-release.apk out/launcher.apk
+          for a in headphones remote-access weather; do
+            f=addons/$a/app/build/outputs/apk/release/app-release.apk
+            if [ -f "$f" ]; then cp "$f" "out/$a.apk"; else echo "::warning::module $a was not built"; fi
+          done
+          ls -l out
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-apk-lean
-          path: launcher/app/build/outputs/apk/release/app-release.apk
+          name: tv-pack
+          path: out/*.apk
