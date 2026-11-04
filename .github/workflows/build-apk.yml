@@ -2831,8 +2831,10 @@ jobs:
               private final Listener listener;
               private boolean running;
 
-              /** "symbol  12°", or empty when there is nothing to show. */
+              /** "12°", or empty when there is nothing to show. */
               String text = "";
+              /** The drawable for the sky (R.drawable.ic_wx_*), 0 when there is none. */
+              int icon;
 
               private final Runnable tick = new Runnable() {
                   @Override
@@ -2867,36 +2869,199 @@ jobs:
               private void refresh() {
                   // The module may have to fetch the weather first: never on the UI thread.
                   new Thread(() -> {
-                      final String next = read(ctx);
+                      final int[] got = read(ctx);
+                      final String next = got == null ? "" : got[0] + "\u00B0";
+                      final int nextIcon = got == null ? 0 : icon(got[1], got[2] == 1);
                       main.post(() -> {
-                          if (!running || next.equals(text)) return;
+                          if (!running || (next.equals(text) && nextIcon == icon)) return;
                           text = next;
+                          icon = nextIcon;
                           listener.onChanged();
                       });
                   }, "weather-glance").start();
               }
 
-              private static String read(Context c) {
+              /** {degrees, WMO code, 1 by day}, or null when the module has nothing to say. */
+              private static int[] read(Context c) {
                   try (Cursor cur = c.getContentResolver().query(URI, null, null, null, null)) {
-                      if (cur == null || !cur.moveToFirst()) return "";
-                      int temp = cur.getInt(cur.getColumnIndexOrThrow("temp"));
-                      int code = cur.getInt(cur.getColumnIndexOrThrow("code"));
-                      boolean day = cur.getInt(cur.getColumnIndexOrThrow("day")) == 1;
-                      return symbol(code, day) + "  " + temp + "°";
+                      if (cur == null || !cur.moveToFirst()) return null;
+                      return new int[]{cur.getInt(cur.getColumnIndexOrThrow("temp")),
+                              cur.getInt(cur.getColumnIndexOrThrow("code")),
+                              cur.getInt(cur.getColumnIndexOrThrow("day"))};
                   } catch (RuntimeException e) {
-                      return "";
+                      return null;
                   }
               }
 
-              /** A symbol from the system's own font for a WMO weather code. */
-              static String symbol(int code, boolean day) {
-                  if (code <= 1) return day ? "☀" : "☾";
-                  if (code <= 3 || code == 45 || code == 48) return "☁";
-                  if (code >= 95) return "⚡";
-                  if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "❄";
-                  return "☂";
+              /** The drawn symbol for a WMO weather code. */
+              static int icon(int code, boolean day) {
+                  if (code <= 1) return day ? R.drawable.ic_wx_sun : R.drawable.ic_wx_moon;
+                  if (code <= 3 || code == 45 || code == 48) return R.drawable.ic_wx_cloud;
+                  if (code >= 95) return R.drawable.ic_wx_storm;
+                  if ((code >= 71 && code <= 77) || code == 85 || code == 86) return R.drawable.ic_wx_snow;
+                  return R.drawable.ic_wx_rain;
               }
           }
+          """)
+
+          # the weather symbols, drawn (a font may lack the characters)
+          write(res + "drawable/ic_wx_sun.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <path
+                          android:fillColor="#FF000000"
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="2.2"
+                          android:strokeLineJoin="round"
+                          android:pathData="M6.5,12a5.5,5.5 0 1,0 11,0a5.5,5.5 0 1,0 -11,0z" />
+                      <path
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="4.4"
+                          android:strokeLineCap="round"
+                          android:pathData="M12,1.5L12,4M12,20L12,22.5M1.5,12L4,12M20,12L22.5,12M4.6,4.6L6.4,6.4M17.6,17.6L19.4,19.4M4.6,19.4L6.4,17.6M17.6,6.4L19.4,4.6" />
+                      <path
+                          android:fillColor="#FFFFFFFF"
+                          android:pathData="M6.5,12a5.5,5.5 0 1,0 11,0a5.5,5.5 0 1,0 -11,0z" />
+                      <path
+                          android:strokeColor="#FFFFFFFF"
+                          android:strokeWidth="2.2"
+                          android:strokeLineCap="round"
+                          android:pathData="M12,1.5L12,4M12,20L12,22.5M1.5,12L4,12M20,12L22.5,12M4.6,4.6L6.4,6.4M17.6,17.6L19.4,19.4M4.6,19.4L6.4,17.6M17.6,6.4L19.4,4.6" />
+              </group>
+          </vector>
+          """)
+          write(res + "drawable/ic_wx_moon.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <path
+                          android:fillColor="#FF000000"
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="2.2"
+                          android:strokeLineJoin="round"
+                          android:pathData="M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 -0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4 -0.44,-0.06 -0.9,-0.1 -1.36,-0.1z" />
+                      <path
+                          android:fillColor="#FFFFFFFF"
+                          android:pathData="M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 -0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4 -0.44,-0.06 -0.9,-0.1 -1.36,-0.1z" />
+              </group>
+          </vector>
+          """)
+          write(res + "drawable/ic_wx_cloud.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <path
+                          android:fillColor="#FF000000"
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="2.2"
+                          android:strokeLineJoin="round"
+                          android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      <path
+                          android:fillColor="#FFFFFFFF"
+                          android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+              </group>
+          </vector>
+          """)
+          write(res + "drawable/ic_wx_rain.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FF000000"
+                              android:strokeColor="#FF000000"
+                              android:strokeWidth="2.2"
+                              android:strokeLineJoin="round"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="4.4"
+                          android:strokeLineCap="round"
+                          android:pathData="M8,18L7,22M12.5,18L11.5,22M17,18L16,22" />
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FFFFFFFF"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:strokeColor="#FFFFFFFF"
+                          android:strokeWidth="2.2"
+                          android:strokeLineCap="round"
+                          android:pathData="M8,18L7,22M12.5,18L11.5,22M17,18L16,22" />
+              </group>
+          </vector>
+          """)
+          write(res + "drawable/ic_wx_snow.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FF000000"
+                              android:strokeColor="#FF000000"
+                              android:strokeWidth="2.2"
+                              android:strokeLineJoin="round"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:fillColor="#FF000000"
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="2.2"
+                          android:strokeLineJoin="round"
+                          android:pathData="M6.2,19.6a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM10.7,21.2a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM15.2,19.6a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0z" />
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FFFFFFFF"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:fillColor="#FFFFFFFF"
+                          android:pathData="M6.2,19.6a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM10.7,21.2a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0zM15.2,19.6a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0z" />
+              </group>
+          </vector>
+          """)
+          write(res + "drawable/ic_wx_storm.xml", r"""<?xml version="1.0" encoding="utf-8"?>
+          <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="26dp" android:height="26dp"
+              android:viewportWidth="28" android:viewportHeight="28">
+              <group android:translateX="2" android:translateY="2">
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FF000000"
+                              android:strokeColor="#FF000000"
+                              android:strokeWidth="2.2"
+                              android:strokeLineJoin="round"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:fillColor="#FF000000"
+                          android:strokeColor="#FF000000"
+                          android:strokeWidth="2.2"
+                          android:strokeLineJoin="round"
+                          android:pathData="M12.8,13.2L8.6,19.2L11.6,19.2L10.6,23.2L15.6,16.8L12.6,16.8L14.2,13.2z" />
+                      <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
+                          <path
+                              android:fillColor="#FFFFFFFF"
+                              android:pathData="M19.35,10.04C18.67,6.59 15.64,4 12,4 9.11,4 6.6,5.64 5.35,8.04 2.34,8.36 0,10.91 0,14c0,3.31 2.69,6 6,6h13c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.65,-4.96z" />
+                      </group>
+                      <path
+                          android:fillColor="#FFFFFFFF"
+                          android:pathData="M12.8,13.2L8.6,19.2L11.6,19.2L10.6,23.2L15.6,16.8L12.6,16.8L14.2,13.2z" />
+              </group>
+          </vector>
           """)
 
           # the launcher may ask another package's provider on Android 11+ only if it is declared as visible
@@ -2914,13 +3079,26 @@ jobs:
           a = once(a, """                        android:background="#33FFFFFF" />
           """, """                        android:background="#33FFFFFF" />
 
+                              <!-- The thin bar between the time and the weather; shown with the weather, and only when the
+                                   clock's own line is gone (date_below_clock). -->
+                              <View
+                                  android:id="@+id/weatherDivider"
+                                  android:layout_width="1dp"
+                                  android:layout_height="30dp"
+                                  android:layout_gravity="bottom"
+                                  android:layout_marginStart="16dp"
+                                  android:layout_marginBottom="9dp"
+                                  android:background="#B3FFFFFF"
+                                  android:visibility="gone" />
+
                               <com.gathin.tvhome.OutlineTextView
                                   android:id="@+id/weatherGlance"
                                   android:layout_width="wrap_content"
                                   android:layout_height="wrap_content"
                                   android:layout_gravity="bottom"
-                                  android:layout_marginStart="18dp"
+                                  android:layout_marginStart="16dp"
                                   android:layout_marginBottom="9dp"
+                                  android:drawablePadding="8dp"
                                   android:singleLine="true"
                                   android:textColor="#FFFFFFFF"
                                   android:textSize="26sp"
@@ -2949,8 +3127,24 @@ jobs:
                    """    /** The temperature and sky next to the clock, from the Weather module; hidden until a city is chosen there. */
               private void showGlance() {
                   if (glanceText == null || glance == null) return;
+                  boolean show = glance.has();
                   glanceText.setText(glance.text);
-                  glanceText.setVisibility(glance.has() ? View.VISIBLE : View.GONE);
+                  android.graphics.drawable.Drawable sky = null;
+                  if (show && glance.icon != 0) {
+                      try {
+                          sky = getDrawable(glance.icon);
+                      } catch (RuntimeException e) {
+                          sky = null;   // a symbol that cannot load must never take Home down: show the degrees alone
+                      }
+                  }
+                  glanceText.setCompoundDrawablesRelativeWithIntrinsicBounds(sky, null, null, null);
+                  glanceText.setVisibility(show ? View.VISIBLE : View.GONE);
+                  // The thin bar between the time and the weather: only where the clock's own line is gone.
+                  View bar = findViewById(R.id.weatherDivider);
+                  if (bar != null) {
+                      bar.setVisibility(show && findViewById(R.id.clockDivider).getVisibility() == View.GONE
+                              ? View.VISIBLE : View.GONE);
+                  }
               }
 
               /** The line under the date: what plays now, shown only while something is playing. */""", "show glance")
@@ -3060,5 +3254,5 @@ jobs:
           ls -l out
       - uses: actions/upload-artifact@v4
         with:
-          name: tv-pack-2
+          name: tv-pack-3
           path: out/*.apk
