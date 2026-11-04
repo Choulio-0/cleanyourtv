@@ -2665,6 +2665,310 @@ jobs:
           write(hp, s)
           print("now playing patch applied")
           PY
+      - name: Weather next to the clock
+        run: |
+          python3 - <<'PY'
+          import sys
+
+          lbase = "launcher/app/src/main/"
+          res = lbase + "res/"
+          jdir = lbase + "java/com/gathin/tvhome/"
+          wbase = "addons/weather/app/src/main/"
+          wdir = wbase + "java/io/github/sumyabazar1/weather/"
+
+
+          def read(p):
+              with open(p, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+
+          def once(text, old, new, label):
+              if text.count(old) != 1:
+                  sys.exit("PATCH FAILED: " + label)
+              return text.replace(old, new)
+
+
+          # ======================= The Weather module: a provider that answers "what is it like outside now" =======================
+          # The launcher has no network permission and keeps none. The Weather module has one, and already knows the city the
+          # owner chose, so it reads Open-Meteo itself, at most every 20 minutes, when Home asks.
+          write(wdir + "GlanceProvider.java", r"""package io.github.sumyabazar1.weather;
+
+          import android.content.ContentProvider;
+          import android.content.ContentValues;
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.database.Cursor;
+          import android.database.MatrixCursor;
+          import android.net.Uri;
+
+          import org.json.JSONException;
+          import org.json.JSONObject;
+
+          import java.io.IOException;
+          import java.util.Locale;
+
+          /**
+           * What the launcher's Home shows next to the clock: the temperature and the sky now at the city chosen in this app,
+           * and nothing else (no city name, no forecast). One row: temp (whole degrees Celsius), code (WMO), day (1 or 0),
+           * age (milliseconds since the reading). No city chosen yet, or no reading younger than three hours: no row.
+           */
+          public class GlanceProvider extends ContentProvider {
+              private static final long FRESH_MS = 20 * 60_000L;
+              private static final long TOO_OLD_MS = 3 * 60 * 60_000L;
+              private static final String[] COLUMNS = {"temp", "code", "day", "age"};
+
+              @Override
+              public boolean onCreate() {
+                  return true;
+              }
+
+              @Override
+              public synchronized Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+                  MatrixCursor out = new MatrixCursor(COLUMNS);
+                  Context c = getContext();
+                  if (c == null) return out;
+                  SharedPreferences place = c.getSharedPreferences("place", Context.MODE_PRIVATE);
+                  long lat = place.getLong("lat", 0);
+                  long lon = place.getLong("lon", 0);
+                  if (lat == 0 && lon == 0) return out;
+                  SharedPreferences cache = c.getSharedPreferences("glance", Context.MODE_PRIVATE);
+                  long now = System.currentTimeMillis();
+                  boolean sameCity = cache.getLong("lat", 1) == lat && cache.getLong("lon", 1) == lon;
+                  long at = sameCity ? cache.getLong("at", 0) : 0;
+                  if (at == 0 || now < at || now - at > FRESH_MS) {
+                      try {
+                          String where = String.format(Locale.ROOT, "latitude=%.4f&longitude=%.4f",
+                                  Double.longBitsToDouble(lat), Double.longBitsToDouble(lon));
+                          JSONObject reply = Forecast.get("https://api.open-meteo.com/v1/forecast?" + where
+                                  + "&models=icon_seamless&current=temperature_2m,relative_humidity_2m,weather_code,is_day"
+                                  + "&timezone=auto");
+                          JSONObject current = reply.getJSONObject("current");
+                          double temp = current.getDouble("temperature_2m");
+                          int code = Forecast.snowIfCold(current.getInt("weather_code"), temp,
+                                  current.getDouble("relative_humidity_2m"));
+                          cache.edit().putLong("lat", lat).putLong("lon", lon).putLong("at", now)
+                                  .putInt("temp", (int) Math.round(temp)).putInt("code", code)
+                                  .putInt("day", current.getInt("is_day")).apply();
+                          at = now;
+                          sameCity = true;
+                      } catch (IOException | JSONException | RuntimeException e) {
+                          // Keep the last reading, if it is still of this city and not too old.
+                      }
+                  }
+                  if (!sameCity || at == 0 || Math.abs(now - at) > TOO_OLD_MS) return out;
+                  out.addRow(new Object[]{cache.getInt("temp", 0), cache.getInt("code", 0), cache.getInt("day", 1), now - at});
+                  return out;
+              }
+
+              @Override
+              public String getType(Uri uri) {
+                  return null;
+              }
+
+              @Override
+              public Uri insert(Uri uri, ContentValues values) {
+                  return null;
+              }
+
+              @Override
+              public int delete(Uri uri, String selection, String[] selectionArgs) {
+                  return 0;
+              }
+
+              @Override
+              public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+                  return 0;
+              }
+          }
+          """)
+
+          fp = wdir + "Forecast.java"
+          f = read(fp)
+          f = once(f, "    private static JSONObject get(String url) throws IOException, JSONException {",
+                   "    static JSONObject get(String url) throws IOException, JSONException {", "forecast get visible")
+          write(fp, f)
+
+          wm = wbase + "AndroidManifest.xml"
+          m = read(wm)
+          m = once(m, "        </activity>\n    </application>",
+                   "        </activity>\n\n"
+                   "        <!-- The temperature and sky now, for the launcher's Home (next to its clock). -->\n"
+                   "        <provider\n"
+                   "            android:name=\".GlanceProvider\"\n"
+                   "            android:authorities=\"io.github.sumyabazar1.weather.glance\"\n"
+                   "            android:exported=\"true\" />\n"
+                   "    </application>", "weather manifest provider")
+          write(wm, m)
+
+          # ======================= The launcher: reads that answer and shows it next to the clock =======================
+          write(jdir + "WeatherGlance.java", r"""package com.gathin.tvhome;
+
+          import android.content.Context;
+          import android.database.Cursor;
+          import android.net.Uri;
+          import android.os.Handler;
+
+          /**
+           * The temperature and sky now, for the line next to the clock. The launcher has no network permission: the Weather
+           * module (a separate app, with the city the owner chose in it) answers a content query. Asked when Home comes to the
+           * front and every ten minutes while it stays. No module, no city chosen, no answer: nothing is shown.
+           */
+          final class WeatherGlance {
+              interface Listener {
+                  void onChanged();
+              }
+
+              private static final Uri URI = Uri.parse("content://io.github.sumyabazar1.weather.glance/now");
+              private static final long EVERY_MS = 10 * 60_000L;
+
+              private final Context ctx;
+              private final Handler main;
+              private final Listener listener;
+              private boolean running;
+
+              /** "symbol  12°", or empty when there is nothing to show. */
+              String text = "";
+
+              private final Runnable tick = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (!running) return;
+                      refresh();
+                      main.postDelayed(this, EVERY_MS);
+                  }
+              };
+
+              WeatherGlance(Context ctx, Handler main, Listener listener) {
+                  this.ctx = ctx.getApplicationContext();
+                  this.main = main;
+                  this.listener = listener;
+              }
+
+              void start() {
+                  if (running) return;
+                  running = true;
+                  main.post(tick);
+              }
+
+              void stop() {
+                  running = false;
+                  main.removeCallbacks(tick);
+              }
+
+              boolean has() {
+                  return !text.isEmpty();
+              }
+
+              private void refresh() {
+                  // The module may have to fetch the weather first: never on the UI thread.
+                  new Thread(() -> {
+                      final String next = read(ctx);
+                      main.post(() -> {
+                          if (!running || next.equals(text)) return;
+                          text = next;
+                          listener.onChanged();
+                      });
+                  }, "weather-glance").start();
+              }
+
+              private static String read(Context c) {
+                  try (Cursor cur = c.getContentResolver().query(URI, null, null, null, null)) {
+                      if (cur == null || !cur.moveToFirst()) return "";
+                      int temp = cur.getInt(cur.getColumnIndexOrThrow("temp"));
+                      int code = cur.getInt(cur.getColumnIndexOrThrow("code"));
+                      boolean day = cur.getInt(cur.getColumnIndexOrThrow("day")) == 1;
+                      return symbol(code, day) + "  " + temp + "°";
+                  } catch (RuntimeException e) {
+                      return "";
+                  }
+              }
+
+              /** A symbol from the system's own font for a WMO weather code. */
+              static String symbol(int code, boolean day) {
+                  if (code <= 1) return day ? "☀" : "☾";
+                  if (code <= 3 || code == 45 || code == 48) return "☁";
+                  if (code >= 95) return "⚡";
+                  if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "❄";
+                  return "☂";
+              }
+          }
+          """)
+
+          # the launcher may ask another package's provider on Android 11+ only if it is declared as visible
+          mp = lbase + "AndroidManifest.xml"
+          lm = read(mp)
+          lm = once(lm, "    <queries>\n",
+                    "    <queries>\n"
+                    "        <!-- The Weather module's answer for the line next to the clock (WeatherGlance). -->\n"
+                    "        <provider android:authorities=\"io.github.sumyabazar1.weather.glance\" />\n", "launcher queries")
+          write(mp, lm)
+
+          # the line itself, right of the clock
+          lp = res + "layout/activity_main.xml"
+          a = read(lp)
+          a = once(a, """                        android:background="#33FFFFFF" />
+          """, """                        android:background="#33FFFFFF" />
+
+                              <com.gathin.tvhome.OutlineTextView
+                                  android:id="@+id/weatherGlance"
+                                  android:layout_width="wrap_content"
+                                  android:layout_height="wrap_content"
+                                  android:layout_gravity="bottom"
+                                  android:layout_marginStart="18dp"
+                                  android:layout_marginBottom="9dp"
+                                  android:singleLine="true"
+                                  android:textColor="#FFFFFFFF"
+                                  android:textSize="26sp"
+                                  android:fontFamily="@string/font_regular"
+                                  android:letterSpacing="0.02"
+                                  android:includeFontPadding="false"
+                                  android:focusable="false"
+                                  android:visibility="gone" />
+          """, "glance view")
+          write(lp, a)
+
+          hp = jdir + "MainActivity.java"
+          s = read(hp)
+          s = once(s, "    private TextView nowLine;\n",
+                   "    private TextView nowLine;\n    private WeatherGlance glance;\n    private TextView glanceText;\n", "glance fields")
+          s = once(s, "        nowPlaying.start();\n",
+                   "        nowPlaying.start();\n"
+                   "        if (glance == null) {\n"
+                   "            glanceText = findViewById(R.id.weatherGlance);\n"
+                   "            glance = new WeatherGlance(this, handler, this::showGlance);\n"
+                   "        }\n"
+                   "        glance.start();\n", "glance start")
+          s = once(s, "        if (nowPlaying != null) nowPlaying.stop();\n",
+                   "        if (nowPlaying != null) nowPlaying.stop();\n        if (glance != null) glance.stop();\n", "glance stop")
+          s = once(s, "    /** The line under the date: what plays now, shown only while something is playing. */",
+                   """    /** The temperature and sky next to the clock, from the Weather module; hidden until a city is chosen there. */
+              private void showGlance() {
+                  if (glanceText == null || glance == null) return;
+                  glanceText.setText(glance.text);
+                  glanceText.setVisibility(glance.has() ? View.VISIBLE : View.GONE);
+              }
+
+              /** The line under the date: what plays now, shown only while something is playing. */""", "show glance")
+          # date_below_clock gives the date a line of its own, which makes the block the top bar sits at the bottom of taller:
+          # lift the bar back level with the clock's row
+          s = once(s, "        if (cfg.dateBelowClock) moveDateBelowClock();\n",
+                   "        if (cfg.dateBelowClock) {\n"
+                   "            moveDateBelowClock();\n"
+                   "            // The date now has a line under the clock, so the block the top bar sits at the bottom of is taller:\n"
+                   "            // lift the bar back level with the clock's row.\n"
+                   "            final View liftBar = findViewById(R.id.topButtons);\n"
+                   "            final View liftRow = (View) findViewById(R.id.clock).getParent();\n"
+                   "            clockBlock.addOnLayoutChangeListener((liftV, liftL, liftT, liftR, liftB, liftOL, liftOT, liftOR, liftOB) ->\n"
+                   "                    liftBar.setTranslationY(Math.min(0f, liftRow.getBottom() - clockBlock.getHeight())));\n"
+                   "        }\n", "lift top bar")
+          write(hp, s)
+          print("weather glance patch applied")
+          PY
       - name: Leaner build, French and English only
         run: |
           python3 - <<'PY'
@@ -2756,5 +3060,5 @@ jobs:
           ls -l out
       - uses: actions/upload-artifact@v4
         with:
-          name: tv-pack
+          name: tv-pack-2
           path: out/*.apk
