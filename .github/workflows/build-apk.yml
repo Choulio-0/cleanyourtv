@@ -2908,7 +2908,7 @@ jobs:
           write(res + "drawable/ic_wx_sun.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <path
@@ -2936,7 +2936,7 @@ jobs:
           write(res + "drawable/ic_wx_moon.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <path
@@ -2954,7 +2954,7 @@ jobs:
           write(res + "drawable/ic_wx_cloud.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <path
@@ -2972,7 +2972,7 @@ jobs:
           write(res + "drawable/ic_wx_rain.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
@@ -3004,7 +3004,7 @@ jobs:
           write(res + "drawable/ic_wx_snow.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
@@ -3035,7 +3035,7 @@ jobs:
           write(res + "drawable/ic_wx_storm.xml", r"""<?xml version="1.0" encoding="utf-8"?>
           <!-- A weather symbol drawn here, not typed: the TV's fonts may lack the character. White with a black edge. -->
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="26dp" android:height="26dp"
+              android:width="36dp" android:height="36dp"
               android:viewportWidth="28" android:viewportHeight="28">
               <group android:translateX="2" android:translateY="2">
                       <group android:scaleX="0.8" android:scaleY="0.8" android:translateX="2.4" android:translateY="0.2">
@@ -3084,10 +3084,10 @@ jobs:
                               <View
                                   android:id="@+id/weatherDivider"
                                   android:layout_width="1dp"
-                                  android:layout_height="30dp"
+                                  android:layout_height="38dp"
                                   android:layout_gravity="bottom"
                                   android:layout_marginStart="16dp"
-                                  android:layout_marginBottom="9dp"
+                                  android:layout_marginBottom="11dp"
                                   android:background="#B3FFFFFF"
                                   android:visibility="gone" />
 
@@ -3097,11 +3097,11 @@ jobs:
                                   android:layout_height="wrap_content"
                                   android:layout_gravity="bottom"
                                   android:layout_marginStart="16dp"
-                                  android:layout_marginBottom="9dp"
-                                  android:drawablePadding="8dp"
+                                  android:layout_marginBottom="5dp"
+                                  android:drawablePadding="10dp"
                                   android:singleLine="true"
                                   android:textColor="#FFFFFFFF"
-                                  android:textSize="26sp"
+                                  android:textSize="36sp"
                                   android:fontFamily="@string/font_regular"
                                   android:letterSpacing="0.02"
                                   android:includeFontPadding="false"
@@ -3254,5 +3254,5 @@ jobs:
           ls -l out
       - uses: actions/upload-artifact@v4
         with:
-          name: tv-pack-3
+          name: tv-pack-4
           path: out/*.apk
